@@ -1,0 +1,9 @@
+# Imported into consumer workspaces, never committed there.
+.DS_Store
+
+# Planning artifacts — working files, not committed history.
+plans/
+
+# Host-specific endpoints the installer writes. Never commit real addresses;
+# the tracked configs carry ${FM_...} placeholders that resolve from this.
+fm-comms.env

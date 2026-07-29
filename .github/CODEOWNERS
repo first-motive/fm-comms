@@ -1,0 +1,12 @@
+# CODEOWNERS — default reviewer for this repo.
+#
+# Governance model: owner-free-on-main.
+#   - The owner pushes to main directly (no PR required for the owner).
+#   - Everyone else branches, opens a PR, and the owner reviews and merges.
+# The owner listed below is the default reviewer and the only person who
+# merges others' PRs.
+#
+# This file lives at the repo root or under .github/.
+# Replace @OWNER with the owner's GitHub username (keep the leading @).
+
+* @ubunish
