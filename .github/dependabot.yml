@@ -1,15 +1,26 @@
 version: 2
 
 updates:
-  # GitHub Actions workflow dependencies.
+  # GitHub Actions workflow dependencies. Every action is SHA-pinned, so this is
+  # the only thing keeping those pins from going stale silently.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
 
-  # Python dependencies. Adjust package-ecosystem to match the repo
-  # (pip covers uv/python projects); remove this block if not applicable.
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
+# No Python ecosystem entry, on purpose.
+#
+# episodes/ is the one Python project here, and its only dependency is
+# eclipse-zenoh, held to >=1.9.0,<1.10 so it matches zenoh/zenoh.version — the
+# single place this repo pins the Zenoh version for the apt packages, the brew
+# formula, and the container images alike. A bot raising that bound would put the
+# queryable on a protocol version the router and the bridges are not on, which is
+# exactly the split the single pin exists to prevent.
+#
+# So the Zenoh version moves by hand, in zenoh/zenoh.version, together with every
+# other install path. Dependabot has nothing to add and one thing to break.
+#
+# The template this repo was scaffolded from carried a `pip` entry at `/`; it
+# failed every run with "No files found in /" because nothing Python lives at the
+# root. Re-pointing it at /episodes would have traded a loud failure for a
+# harmful success.
