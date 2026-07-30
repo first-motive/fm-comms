@@ -20,13 +20,6 @@ at `comms/` (and carries a `COLCON_IGNORE` so colcon skips it), the same way
 Zenoh is opt-in. `fm-ros2` runs the `foxglove` comms profile by default, and
 nothing here is reachable until a host selects the `zenoh` profile.
 
-## Status
-
-Scaffold. The front doors and governance are in place; the Zenoh configs, the
-systemd units, and the per-role installers the commands below dispatch to land in
-the next commit, and `v0.1.0` is cut once they do. `./install.sh --role <role>`
-tells you which roles a checkout actually carries.
-
 ## Install
 
 Pick the role this host plays:
@@ -58,9 +51,25 @@ Remove what the installer placed:
 ./run.sh --help
 ```
 
-Real endpoints are host-specific and are never committed. The installer writes
-them to `/etc/fm-comms.env`; the configs in `zenoh/` carry placeholders that
-resolve from it.
+Real endpoints are host-specific and are never committed. The installer places
+`/etc/fm-comms.env` from `systemd/fm-comms.env.example` on first run and stops so
+you can fill it in; the configs in `zenoh/` carry `${FM_...}` placeholders that
+the installer resolves from it into `/etc/fm-comms/`.
+
+A rig picks its topic set with `FM_BRIDGE_PROFILE` in that file:
+
+```
+recorder    head + wrist cameras, hand tracking, capture session, LiDAR
+processor   the dataset engine's run state and commands
+robot       joint states and TF out, Servo jog commands in
+```
+
+Hosts that run the stack in Docker use the compose overlay instead of the
+systemd units — same configs, same pinned version:
+
+```bash
+./run.sh compose up -d zenoh-bridge
+```
 
 ## Development
 

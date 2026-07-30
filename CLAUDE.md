@@ -45,4 +45,8 @@ shellcheck scripts/*.sh run.sh install.sh
 
 - `install.sh` / `run.sh` — front doors; thin dispatchers over `scripts/`
 - `lib.sh` — shared bootstrap functions, sourced never executed
-- `scripts/` — one file per verb, each runnable standalone
+- `scripts/` — one file per verb, each runnable standalone; `install-<role>.sh`
+  is what `install.sh --role <role>` dispatches to, so a new role is one new file
+- `zenoh/` — config templates plus `zenoh.version`, the single version pin
+- `systemd/` — the two units and the `fm-comms.env` example they read
+- `deploy/` — the compose overlay, for hosts that run the stack in containers

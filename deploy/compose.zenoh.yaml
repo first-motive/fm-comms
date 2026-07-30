@@ -1,0 +1,50 @@
+# compose.zenoh.yaml — the Zenoh transport as containers.
+#
+# For hosts that run the First Motive stack in Docker rather than natively: the
+# macOS container path, and any Linux host where installing zenohd system-wide is
+# unwanted. It carries the same two processes the systemd units run, reading the
+# same rendered configs, so a container host and a native host are interchangeable
+# on the wire.
+#
+# Drive it through the compose verb, which overlays it onto the workspace compose
+# file and exports the pinned version:
+#
+#   ./run.sh compose up -d zenoh-bridge
+#
+# Both services take the pinned version from FM_ZENOH_VERSION and their endpoints
+# from /etc/fm-comms.env, so a container host and a native host resolve the same
+# two inputs. FM_ZENOH_VERSION is interpolated by compose at parse time, which an
+# env_file cannot supply — scripts/compose.sh exports it from zenoh/zenoh.version.
+# Running `docker compose` directly works too, as long as it is exported first.
+
+services:
+  # The router. One per fleet, on the office workstation — never start a second.
+  zenoh-router:
+    image: eclipse/zenoh:${FM_ZENOH_VERSION:?set FM_ZENOH_VERSION from comms/zenoh/zenoh.version}
+    container_name: fm-zenoh-router
+    command: ["--config", "/etc/fm-comms/router.json5"]
+    env_file: [/etc/fm-comms.env]
+    # host networking, not a published port: the router must advertise an address
+    # its peers can actually reach, and a NAT'd bridge network advertises one they
+    # cannot. This is the same reason the DDS path never ran behind a bridge.
+    network_mode: host
+    volumes:
+      - /etc/fm-comms:/etc/fm-comms:ro
+    restart: unless-stopped
+
+  # The ROS 2 bridge. One per rig.
+  zenoh-bridge:
+    image: eclipse/zenoh-bridge-ros2dds:${FM_ZENOH_VERSION:?set FM_ZENOH_VERSION from comms/zenoh/zenoh.version}
+    container_name: fm-zenoh-bridge
+    command: ["--config", "/etc/fm-comms/bridge.json5"]
+    env_file: [/etc/fm-comms.env]
+    # The bridge must share the rig's DDS graph. DDS discovery is multicast and
+    # per-host, so anything other than host networking leaves the bridge talking
+    # to an empty graph.
+    network_mode: host
+    # DDS shared-memory transport between the bridge and the rig's nodes needs a
+    # shared IPC namespace; without it FastDDS silently falls back to UDP loopback.
+    ipc: host
+    volumes:
+      - /etc/fm-comms:/etc/fm-comms:ro
+    restart: unless-stopped

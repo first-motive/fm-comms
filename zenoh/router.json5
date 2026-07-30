@@ -1,0 +1,47 @@
+/// zenohd — the single First Motive router, on the office workstation.
+///
+/// Every bridge and every client connects here in `client` mode, so this process
+/// is the one place the whole fleet meets. Nothing else runs a router: a second
+/// one would partition the fleet or duplicate every sample.
+///
+/// This file is a TEMPLATE. `scripts/install-router.sh` renders it with envsubst
+/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/router.json5.
+/// Committed files carry placeholders only — never a real address.
+///
+/// Placeholders:
+///   FM_ROUTER_PORT        TCP port to listen on (7447 by convention)
+{
+  mode: "router",
+
+  /// Listen on every interface so the tailnet address and the LAN address both
+  /// work. Reachability is the tailnet ACL's job, not this file's — the router
+  /// is not exposed to the public internet, so there is no TLS/mTLS here. See
+  /// docs/REMOTE.md for how a contractor is granted router:7447 and nothing else.
+  listen: {
+    endpoints: ["tcp/[::]:${FM_ROUTER_PORT}"],
+  },
+
+  /// The fleet is explicit: bridges and clients are configured with this router's
+  /// endpoint. Multicast scouting would additionally pull in whatever happens to
+  /// be on the office LAN, which is exactly the accidental-peering problem the
+  /// DDS setup already had. Gossip stays on so a client learns peers through the
+  /// router it is already connected to.
+  scouting: {
+    multicast: { enabled: false },
+    gossip: { enabled: true },
+  },
+
+  transport: {
+    link: {
+      /// A rig on Wi-Fi drops out; without a keepalive the router holds a dead
+      /// session and the desktop shows a live-looking rig that never updates.
+      tx: { keep_alive: 4 },
+      rx: {
+        /// Camera frames are the largest samples on the wire. The 10 MB ceiling
+        /// covers a compressed frame with headroom; raw frames are denied at the
+        /// bridge rather than accommodated here.
+        max_message_size: 10485760,
+      },
+    },
+  },
+}

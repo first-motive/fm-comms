@@ -1,0 +1,81 @@
+/// zenoh-bridge-ros2dds on a ROBOT rig — an arm under ros2_control with MoveIt
+/// Servo, driven from the desktop teleop surface.
+///
+/// This is the one bridge that carries COMMANDS to actuators, so its inbound
+/// allowlist is deliberately short and explicit. A topic that moves a physical
+/// arm is added here on purpose, never by a wildcard.
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it with envsubst
+/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/bridge.json5.
+/// Committed files carry placeholders only — never a real address.
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<workstation>:7447
+///   FM_RIG_NAMESPACE      this rig's name, e.g. arm1
+///   FM_ROS_DOMAIN_ID      the DDS domain the rig's nodes run on
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      namespace: "/${FM_RIG_NAMESPACE}",
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      allow: {
+        publishers: [
+          /// State the cockpit renders: where the arm is, what it looks like.
+          "/joint_states",
+          "/robot_description",
+          "/tf",
+          "/tf_static",
+          "/rosout",
+          /// Servo's own status, so the operator sees why a jog was refused.
+          "/servo_node.*/status",
+        ],
+        subscribers: [
+          /// Jog commands. Servo applies its own limits and collision checks on
+          /// the rig, so a dropped or delayed sample degrades to "stop", not to
+          /// an unbounded motion.
+          "/servo_node.*/delta_twist_cmds",
+          "/servo_node.*/delta_joint_cmds",
+          "/target_pose",
+          /// Gripper open/close presets.
+          "/gripper_teleop/.*/preset",
+          /// Base velocity, on the robots that have a base.
+          "/cmd_vel",
+        ],
+        service_servers: [
+          /// Switching controllers is how teleop is armed and disarmed.
+          "/controller_manager/.*",
+          "/robot_state_publisher/.*",
+          "/servo_node.*/.*",
+        ],
+      },
+
+      deny: {
+        subscribers: [
+          /// Never accept a raw trajectory from off-rig. The arm controllers take
+          /// joint_trajectory directly, bypassing Servo's limits and collision
+          /// checking — a remote publisher on a lossy link must not reach them.
+          ".*_controller/joint_trajectory$",
+        ],
+      },
+
+      /// TF at full rate is the largest stream a robot rig produces; the cockpit
+      /// renders well below it.
+      pub_max_frequencies: [
+        "/tf=30",
+        "/joint_states=50",
+      ],
+
+      reliable_routes_blocking: false,
+    },
+  },
+}

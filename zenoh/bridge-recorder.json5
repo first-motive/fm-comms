@@ -1,0 +1,106 @@
+/// zenoh-bridge-ros2dds on a RECORDER rig — the head RealSense, the hand tracker,
+/// the capture session, and the LiDAR when the rig carries one.
+///
+/// The bridge joins the rig's local DDS graph and republishes the allowed topics
+/// onto Zenoh under the rig's namespace, so the desktop sees /<rig>/head/... and
+/// two rigs never collide on /head/....
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it with envsubst
+/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/bridge.json5.
+/// Committed files carry placeholders only — never a real address.
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<workstation>:7447
+///   FM_RIG_NAMESPACE      this rig's name, e.g. rig1
+///   FM_ROS_DOMAIN_ID      the DDS domain the rig's nodes run on
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  /// The router is named explicitly, so scouting would only find noise.
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      namespace: "/${FM_RIG_NAMESPACE}",
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      /// Allowlist, not denylist: a new topic on a rig stays local until someone
+      /// decides it should cross the network. The rig's own DDS graph is
+      /// unaffected either way — this governs what leaves the rig.
+      allow: {
+        publishers: [
+          /// Compressed camera frames only. The raw variants are 20-50x larger and
+          /// exist for on-rig consumers (the tracker, the recorder); sending them
+          /// over Wi-Fi is what saturates the link. Deny below makes this explicit.
+          "/head/.*/compressed",
+          "/wrist/.*/compressed",
+          "/camera/wrist_.*/compressed",
+          "/head/.*/camera_info",
+          "/wrist/.*/camera_info",
+          "/head/imu",
+          /// Hand tracking: the skeletons and the engage/tracking state the
+          /// cockpit renders.
+          "/vision/.*",
+          /// Capture session state the desktop's capture surface reads.
+          "/capture/.*",
+          "/fm_data_record/.*",
+          /// LiDAR, on the rigs that carry one. Points are large but bounded;
+          /// drop this pair on a rig where the link cannot carry them.
+          "/lidar/.*",
+          "/livox/.*",
+          /// The robot model and its pose, so the cockpit can render the rig.
+          "/joint_states",
+          "/robot_description",
+          "/tf",
+          "/tf_static",
+          "/rosout",
+        ],
+        subscribers: [
+          /// The desktop drives the capture session and resets the tracker; both
+          /// are commands INTO the rig, so they are the only inbound topics.
+          "/capture/.*",
+          "/fm_data_record/episode_marker",
+          "/vision/engage",
+          "/vision/reset",
+        ],
+        service_servers: [
+          /// The bridge serves the rig's URDF assets to the cockpit through the
+          /// description services; nothing else on the rig is called remotely.
+          "/robot_state_publisher/.*",
+        ],
+      },
+
+      deny: {
+        publishers: [
+          /// Uncompressed frames and raw depth. On-rig consumers read these
+          /// straight off DDS; nothing off-rig should pull them over the network.
+          ".*/image_raw$",
+          ".*/image_rect_raw$",
+          ".*/aligned_depth_to_color/image_raw$",
+        ],
+      },
+
+      /// Rate limits for the topics that would otherwise flood a Wi-Fi link. The
+      /// rig keeps publishing at full rate locally; only what crosses Zenoh is
+      /// thinned. Tune per rig once the link is measured — see docs/REMOTE.md.
+      pub_max_frequencies: [
+        "/head/.*/compressed=15",
+        "/wrist/.*/compressed=15",
+        "/camera/wrist_.*/compressed=15",
+        "/lidar/points=5",
+        "/livox/lidar=5",
+        "/tf=30",
+      ],
+
+      /// Reliability follows the ROS QoS the publisher declared, rather than
+      /// being forced here — the recorder's BEST_EFFORT camera path and the
+      /// RELIABLE capture-state path must both keep their own semantics.
+      reliable_routes_blocking: false,
+    },
+  },
+}

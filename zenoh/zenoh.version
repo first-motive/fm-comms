@@ -1,0 +1,6 @@
+# The one place the Zenoh version is pinned. Every install path — the brew tap on
+# macOS, the Eclipse apt repo on the rigs, the container image — resolves this
+# value, so a router and a bridge never negotiate across a version gap.
+#
+# zenohd and zenoh-plugin-ros2dds are released together and share this number.
+FM_ZENOH_VERSION=1.9.0

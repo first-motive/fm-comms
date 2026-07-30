@@ -1,0 +1,51 @@
+/// zenoh-bridge-ros2dds on a PROCESSOR rig — the dataset engine and the process
+/// supervisor the desktop's Process surface drives.
+///
+/// The processor publishes state and consumes commands; it moves no camera
+/// traffic, so this bridge is narrow by design. Episode payloads do NOT travel
+/// here — they are fetched through the episode queryable (scripts/episodes.sh),
+/// which serves MCAP bytes on demand rather than streaming them.
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it with envsubst
+/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/bridge.json5.
+/// Committed files carry placeholders only — never a real address.
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<workstation>:7447
+///   FM_RIG_NAMESPACE      this rig's name, e.g. proc1
+///   FM_ROS_DOMAIN_ID      the DDS domain the rig's nodes run on
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      namespace: "/${FM_RIG_NAMESPACE}",
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      allow: {
+        publishers: [
+          /// Run state, the job index, and per-job detail — what the Process
+          /// surface renders.
+          "/process/.*",
+          "/rosout",
+        ],
+        subscribers: [
+          /// Commands into the processor: start a run, annotate, provision the
+          /// real model, delete a job.
+          "/process/.*",
+        ],
+      },
+
+      /// Nothing here is high-rate; the supervisor publishes status on change,
+      /// not on a timer, so no rate limit is needed.
+      reliable_routes_blocking: false,
+    },
+  },
+}

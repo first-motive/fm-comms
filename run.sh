@@ -54,11 +54,18 @@ fm_load_lib() {
 }
 
 # Reattach an interactive terminal after a curl pipe has consumed stdin. A verb
-# that prompts calls this; with no tty (CI) it is a no-op.
+# that prompts needs this.
+#
+# Three guards, each earning its place: stdin may already be a terminal (nothing
+# to do); /dev/tty may not exist; and — the one that bites — /dev/tty can exist
+# yet be unopenable in a session with no controlling terminal, which is every CI
+# job and every systemd unit. An `exec` redirection that fails takes a
+# non-interactive shell down with it, so the open is rehearsed in a subshell first.
 reattach_tty() {
-  if [ -e /dev/tty ]; then
-    exec </dev/tty
-  fi
+  [ -t 0 ] && return 0
+  [ -e /dev/tty ] || return 0
+  ( : </dev/tty ) 2>/dev/null || return 0
+  exec </dev/tty
 }
 
 # The verbs this checkout carries, excluding the install-<role>.sh scripts —

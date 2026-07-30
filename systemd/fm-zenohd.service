@@ -1,0 +1,26 @@
+[Unit]
+Description=First Motive Zenoh router (zenohd)
+Documentation=https://github.com/first-motive/fm-comms
+# The router only needs the network; it has no ROS dependency and comes up long
+# before any rig does.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/fm-comms.env
+ExecStart=/usr/bin/zenohd --config /etc/fm-comms/router.json5
+Restart=always
+RestartSec=5
+# A router that cannot bind its port fails instantly and forever; without this
+# the default rate limiter gives up and leaves the fleet with no router at all.
+StartLimitIntervalSec=0
+
+# The router terminates transports; it reads no robot data and writes no files.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

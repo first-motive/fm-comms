@@ -1,0 +1,27 @@
+[Unit]
+Description=First Motive Zenoh ROS 2 bridge (zenoh-bridge-ros2dds)
+Documentation=https://github.com/first-motive/fm-comms
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Carries ROS_DOMAIN_ID as well as the FM_* values: the bridge joins the rig's
+# DDS graph, so it must run on the same domain as the rig's nodes. The rendered
+# config carries the domain too, and the installer writes both from the same
+# FM_ROS_DOMAIN_ID so they cannot drift apart.
+EnvironmentFile=/etc/fm-comms.env
+ExecStart=/usr/bin/zenoh-bridge-ros2dds --config /etc/fm-comms/bridge.json5
+Restart=always
+RestartSec=5
+# A rig boots before the office router is reachable, and a rig on Wi-Fi loses it
+# again; the bridge must keep retrying forever rather than being rate-limited out.
+StartLimitIntervalSec=0
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
