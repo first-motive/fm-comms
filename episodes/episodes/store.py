@@ -1,0 +1,129 @@
+"""Episode lookups over the recorder's output directory — no Zenoh, no I/O policy.
+
+The recorder is the source of truth: it writes one bag directory per episode plus
+an append-only ``sessions.jsonl`` index beside them (see fm-data's
+``fm_data_record.core.session_index``). This module reads that layout and nothing
+else. It creates nothing, moves nothing, and deletes nothing — the rsync pipeline
+that ships recordings around stays the only thing that writes here.
+
+Everything in here is a pure function over a directory path, so the query
+behaviour is testable without opening a Zenoh session.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+# The index the recorder appends one line to per finalized episode.
+SESSION_INDEX_NAME = "sessions.jsonl"
+
+# Episode ids the recorder mints. Anchored and deliberately narrow: an id arrives
+# from the network and is then used to resolve a filesystem path, so anything that
+# could traverse (a slash, a dot-dot, a NUL) must fail the match rather than be
+# stripped — stripping invites the classic "sanitised into a different valid path"
+# bug.
+_EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+class EpisodeError(Exception):
+    """A query could not be answered. The message is safe to return to a caller."""
+
+
+def valid_episode_id(episode_id: str) -> bool:
+    """True when ``episode_id`` is shaped like an id the recorder mints.
+
+    ``..`` is rejected outright: it matches the character class otherwise, and it
+    is the one value whose whole purpose is to leave the directory.
+    """
+
+    if episode_id == ".." or "/" in episode_id or "\\" in episode_id:
+        return False
+    return bool(_EPISODE_ID_RE.match(episode_id))
+
+
+def read_index(recordings_dir: str | Path) -> list[dict[str, Any]]:
+    """Every indexed episode, newest-first.
+
+    Mirrors fm-data's reader deliberately: the index is derived, not authoritative,
+    so a blank or malformed line is skipped rather than raised. A killed recorder
+    leaves a partial final line, and that must cost one row, not the whole listing.
+    The file is appended oldest-first, so the result is reversed for a listing view.
+    """
+
+    path = Path(recordings_dir) / SESSION_INDEX_NAME
+    if not path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("episode_id"):
+            records.append(record)
+    records.reverse()
+    return records
+
+
+def find_record(recordings_dir: str | Path, episode_id: str) -> dict[str, Any]:
+    """The index record for one episode.
+
+    Raises :class:`EpisodeError` for a malformed id or an unknown one, so a caller
+    reports the same shape of failure either way.
+    """
+
+    if not valid_episode_id(episode_id):
+        raise EpisodeError(f"malformed episode id: {episode_id!r}")
+    for record in read_index(recordings_dir):
+        if record.get("episode_id") == episode_id:
+            return record
+    raise EpisodeError(f"unknown episode: {episode_id}")
+
+
+def resolve_mcap(recordings_dir: str | Path, episode_id: str) -> Path:
+    """The MCAP file for one episode, guaranteed to sit under ``recordings_dir``.
+
+    The index record's ``path`` is a bag *directory* written by the recorder, and it
+    may be absolute (recorded on the rig) or relative. Either way the result is
+    re-resolved and checked against the recordings root: the index is a derived file
+    an operator can edit, so its ``path`` is treated as input to validate rather
+    than a location to trust. A bag with several MCAP parts resolves to the first
+    by name, which is the recorder's write order.
+    """
+
+    root = Path(recordings_dir).resolve()
+    record = find_record(root, episode_id)
+
+    raw = record.get("path")
+    if not raw:
+        raise EpisodeError(f"episode {episode_id} has no path in the index")
+
+    bag = Path(raw)
+    # An absolute path recorded on a different host does not exist here; fall back
+    # to the same-named directory under this root, which is what rsync lands.
+    candidates = [bag] if bag.is_absolute() else []
+    candidates += [root / bag.name, root / bag]
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not _within(resolved, root):
+            continue
+        if not resolved.is_dir():
+            continue
+        parts = sorted(resolved.glob("*.mcap"))
+        if parts:
+            return parts[0]
+
+    raise EpisodeError(f"no mcap found for episode {episode_id}")
+
+
+def _within(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or sits beneath it, both already resolved."""
+
+    return path == root or root in path.parents

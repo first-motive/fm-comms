@@ -34,12 +34,18 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
 
 ## Testing
 
-There is no unit-test suite; the content is configuration. CI shellchecks the
-scripts and exercises the `curl | bash` path for both front doors:
+Most of this repo is configuration, so CI shellchecks every script and exercises
+the `curl | bash` path for both front doors. The one piece of Python — the episode
+queryable — carries a real suite:
 
 ```bash
-shellcheck scripts/*.sh run.sh install.sh
+shellcheck $(find . -name '*.sh' -not -path './.git/*')
+uv run --project episodes pytest -q
 ```
+
+The queryable's logic lives in `episodes/episodes/store.py` and `query.py`, which
+import no Zenoh at all; `service.py` is the only module that opens a session. Keep
+it that way — it is why the suite needs no router and no network.
 
 ## Layout
 

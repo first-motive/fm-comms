@@ -71,12 +71,40 @@ systemd units — same configs, same pinned version:
 ./run.sh compose up -d zenoh-bridge
 ```
 
+## Episodes
+
+A processor rig also serves the recorder's episodes over Zenoh, so the desktop or
+a remote contractor can pull one episode instead of waiting for a whole
+recordings directory to sync:
+
+```
+fm/episodes/index          every indexed episode, newest-first     JSON
+fm/episodes/<id>/meta      one episode's index record              JSON
+fm/episodes/<id>/mcap      that episode's MCAP bytes               octet-stream
+```
+
+```bash
+./run.sh episodes install     # enable the service (reads FM_EPISODES_DIR)
+./run.sh episodes run         # or serve in the foreground
+```
+
+Reads only — the rsync pipeline stays the source of truth for moving recordings
+between hosts. Index and fetch, no streaming replay: a query is one request and
+one reply, so an MCAP over `FM_EPISODES_MAX_BYTES` is refused rather than stalling
+the router.
+
 ## Development
 
 Lint the scripts — the same check CI runs:
 
 ```bash
-shellcheck scripts/*.sh run.sh install.sh
+shellcheck $(find . -name '*.sh' -not -path './.git/*')
+```
+
+Test the episode queryable:
+
+```bash
+uv run --project episodes pytest -q
 ```
 
 See `CONTRIBUTING.md` for the branch, commit, and PR workflow.

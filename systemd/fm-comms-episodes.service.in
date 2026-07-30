@@ -1,0 +1,51 @@
+# fm-comms-episodes.service — the episode queryable on a processor rig.
+#
+# A TEMPLATE, hence the .in suffix. systemd expands ${VAR} from an EnvironmentFile
+# only in Exec* command lines, never in WorkingDirectory, User, or the sandboxing
+# paths — those must be literal by the time systemd reads the file. So
+# `./run.sh episodes install` renders this with fm_render_template (the same path
+# the Zenoh configs take) into /etc/systemd/system/fm-comms-episodes.service.
+#
+# Placeholders:
+#   FM_COMMS_CHECKOUT   this rig's fm-comms checkout
+#   FM_COMMS_USER       the account that owns the checkout and the recordings
+#   FM_EPISODES_DIR     recorder output directory holding sessions.jsonl
+
+[Unit]
+Description=First Motive episode queryable (Zenoh index + MCAP fetch)
+Documentation=https://github.com/first-motive/fm-comms
+# Needs the network, and wants the bridge up first so the queryable registers with
+# the router in the same window the rig's topics appear. Wants, not Requires: the
+# queryable is useful on its own and must not be held down by a bridge failure.
+After=network-online.target fm-zenoh-bridge.service
+Wants=network-online.target fm-zenoh-bridge.service
+
+[Service]
+Type=simple
+# The operator's account, not root: the recordings and the uv venv both live under
+# it, and nothing here needs privilege.
+User=${FM_COMMS_USER}
+# Carries FM_EPISODES_DIR and FM_EPISODES_MAX_BYTES, which the service reads from
+# its environment.
+EnvironmentFile=/etc/fm-comms.env
+WorkingDirectory=${FM_COMMS_CHECKOUT}/episodes
+# The venv's own console script, not `uv run`: uv is rarely on systemd's PATH, and
+# resolving dependencies at boot would make starting depend on the network.
+# `./run.sh episodes install` runs uv sync so this path exists.
+ExecStart=${FM_COMMS_CHECKOUT}/episodes/.venv/bin/episodes
+Restart=always
+RestartSec=5
+# A processor rig boots before the office router is reachable; the queryable must
+# keep retrying rather than being rate-limited out of existence.
+StartLimitIntervalSec=0
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# The queryable never writes to the recordings — the rsync pipeline owns that — and
+# it needs nothing else on disk beyond its own venv.
+ProtectHome=read-only
+ReadOnlyPaths=${FM_EPISODES_DIR}
+
+[Install]
+WantedBy=multi-user.target

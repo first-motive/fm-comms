@@ -7,3 +7,9 @@ plans/
 # Host-specific endpoints the installer writes. Never commit real addresses;
 # the tracked configs carry ${FM_...} placeholders that resolve from this.
 fm-comms.env
+
+# The episode queryable's venv, built on each rig by `uv sync`. uv.lock IS
+# tracked — the rigs must install what CI tested.
+.venv/
+__pycache__/
+.pytest_cache/
