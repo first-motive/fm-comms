@@ -93,6 +93,12 @@ between hosts. Index and fetch, no streaming replay: a query is one request and
 one reply, so an MCAP over `FM_EPISODES_MAX_BYTES` is refused rather than stalling
 the router.
 
+## Remote Access
+
+Someone outside the office needs a tailnet account and one ACL grant — TCP 7447 on
+the router, nothing else. [`docs/REMOTE.md`](docs/REMOTE.md) is the runbook: invite,
+grant, endpoint, smoke commands, and what the grant deliberately does not allow.
+
 ## Development
 
 Lint the scripts — the same check CI runs:
