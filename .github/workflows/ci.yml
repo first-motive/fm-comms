@@ -12,6 +12,11 @@ permissions:
   contents: read
 
 jobs:
+  # Rendered files (AGENTS.md, .fm/) come from the render plane and carry a hash of
+  # their own body. This fails the PR when one was edited in place.
+  drift:
+    uses: first-motive/.github/.github/workflows/drift-check.yml@main
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
@@ -52,36 +57,21 @@ jobs:
       - run: uv run --frozen --project episodes pytest -q
         working-directory: episodes
 
-  curl-smoke:
-    name: curl|bash path
-    # Piping a script into bash makes bash read it from stdin, which empties
-    # BASH_SOURCE and breaks process substitution — the failure mode the eval
-    # fetch in fm_load_lib exists to avoid. Pipe each front door in exactly as
-    # the docs tell users to, and assert the lib loaded. FM_SELFTEST stops each
-    # script after deps load and the OS resolves, before any real install.
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - name: run.sh + install.sh load lib over piped curl
-        run: |
-          set -euo pipefail
-          repo="$PWD"
-          # Run from an empty dir so each script takes its network (curl) branch
-          # — the piped path real users hit — instead of finding lib.sh beside a
-          # clone. lib.sh is fetched at the pinned tag.
-          cd "$(mktemp -d)"
-          # Fetch lib.sh from the commit under test rather than the pinned
-          # release tag, so CI proves this change's pipe path, not a published one.
-          export FM_TAG="$GITHUB_SHA"
-          for s in run.sh install.sh; do
-            echo "== $s =="
-            out="$(FM_SELFTEST=1 bash < "$repo/$s" 2>&1)" \
-              || { echo "$out"; echo "FAIL: $s exited non-zero under curl|bash"; exit 1; }
-            echo "$out"
-            echo "$out" | grep -q "selftest ok" \
-              || { echo "FAIL: $s did not load lib via piped curl"; exit 1; }
-          done
-          echo "curl|bash path OK"
+  # Piping a script into bash makes bash read it from stdin, which empties
+  # BASH_SOURCE and breaks process substitution — the failure mode the eval fetch
+  # in fm_load_lib exists to avoid. The org workflow pipes each front door in
+  # exactly as the docs tell users to. FM_TAG points at the commit under test, so
+  # this proves this change's pipe path rather than a published one. Both host
+  # families run it: macOS resolves a different branch than Linux.
+  curl-smoke-linux:
+    uses: first-motive/.github/.github/workflows/bootstrap-selftest.yml@main
+    with:
+      scripts: run.sh install.sh
+      script-env: FM_TAG=${{ github.sha }}
+
+  curl-smoke-macos:
+    uses: first-motive/.github/.github/workflows/bootstrap-selftest.yml@main
+    with:
+      scripts: run.sh install.sh
+      script-env: FM_TAG=${{ github.sha }}
+      runs-on: '"macos-latest"'
