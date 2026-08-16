@@ -21,7 +21,27 @@ import signal
 import sys
 from pathlib import Path
 
+from episodes.machine import MachineCardError, recordings_dir
 from episodes.query import DEFAULT_MAX_MCAP_BYTES, KEY_PREFIX, answer
+
+
+def _default_recordings_dir() -> str:
+    """Where to serve from when nobody said: the card's workspace, then a guess.
+
+    ``FM_EPISODES_DIR`` still wins — the shell verbs resolve it and export it — but
+    running ``uv run episodes`` by hand on a rig should land in the same place the
+    unit does rather than in whatever ``~/recordings`` happens to be. A refused
+    card is fatal here rather than silently skipped: if this machine says it is
+    something this build cannot read, the directory it names is not a guess worth
+    making.
+    """
+    told = os.environ.get("FM_EPISODES_DIR")
+    if told:
+        return told
+    derived = recordings_dir()
+    if derived is not None:
+        return str(derived)
+    return str(Path.home() / "recordings")
 
 
 def _handler(recordings_dir: Path, max_bytes: int):
@@ -44,12 +64,18 @@ def _handler(recordings_dir: Path, max_bytes: int):
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        default_recordings = _default_recordings_dir()
+    except MachineCardError as exc:
+        print(f"episodes: {exc}", file=sys.stderr)
+        return 1
+
     parser = argparse.ArgumentParser(
         description="Serve First Motive episodes over Zenoh (index + MCAP fetch).",
     )
     parser.add_argument(
         "--recordings-dir",
-        default=os.environ.get("FM_EPISODES_DIR", str(Path.home() / "recordings")),
+        default=default_recordings,
         help="Recorder output directory holding sessions.jsonl and the bags.",
     )
     parser.add_argument(

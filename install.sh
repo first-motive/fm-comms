@@ -17,7 +17,8 @@
 #
 # Env overrides:
 #   FM_COMMS_ROLE       role to install             (same as --role)
-#   FM_COMMS_DIR        checkout dir for the pipe   (default: $HOME/.first-motive/fm-comms)
+#   FM_COMMS_DIR        checkout dir for the pipe   (default: the identity card's
+#                                                    workspace, else $HOME/.first-motive/fm-comms)
 #   FM_INSTALL_DIR      where binaries go           (default: $HOME/.first-motive/bin)
 #   FM_NO_MODIFY_PATH   skip shell-profile edits    (set to 1 in CI)
 #   FM_SELFTEST         CI self-test, no real work  (set to 1 in CI)
@@ -36,7 +37,10 @@ FM_TAG="${FM_TAG:-v0.1.0}"
 FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
 
 FM_COMMS_ROLE="${FM_COMMS_ROLE:-}"
-FM_COMMS_DIR="${FM_COMMS_DIR:-$HOME/.first-motive/fm-comms}"
+# Left empty deliberately: the default is the workspace this machine's identity
+# card names, and the card cannot be read before lib.sh has loaded. Resolved in
+# main() by fm_comms_dir_default.
+FM_COMMS_DIR="${FM_COMMS_DIR:-}"
 FM_INSTALL_DIR="${FM_INSTALL_DIR:-$HOME/.first-motive/bin}"
 FM_NO_MODIFY_PATH="${FM_NO_MODIFY_PATH:-0}"
 FM_SELFTEST="${FM_SELFTEST:-0}"
@@ -61,6 +65,21 @@ fm_load_lib() {
       return 1
     fi
     eval "$body"
+  fi
+}
+
+# Echo where a curl-pipe install should put its checkout.
+#
+# A machine with an identity card already says where every First Motive checkout
+# lives, so the pipe puts fm-comms there beside the rest rather than hiding it in
+# a dotdir the operator has to be told about. A machine with no card — a laptop in
+# client mode — keeps the dotdir, which needs no configuration to work.
+fm_comms_dir_default() {
+  local workspace
+  if fm_machine_exists && workspace="$(fm_machine_get workspace 2>/dev/null)" && [ -n "$workspace" ]; then
+    printf '%s\n' "$workspace/fm-comms"
+  else
+    printf '%s\n' "$HOME/.first-motive/fm-comms"
   fi
 }
 
@@ -189,6 +208,8 @@ selftest() {
 main() {
   fm_load_lib
   fm_banner
+
+  [ -n "$FM_COMMS_DIR" ] || FM_COMMS_DIR="$(fm_comms_dir_default)"
 
   local cmd="install" dry=0 role="$FM_COMMS_ROLE"
   while [ "$#" -gt 0 ]; do

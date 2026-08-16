@@ -55,8 +55,11 @@ do_install() {
       ;;
   esac
 
+  # The key is the rig's namespace, which is its machine name with underscores:
+  # fm-rec-01 publishes under fm_rec_01, and `./run.sh render show` on the rig
+  # prints it. A client holds no config of its own, so nothing here is rendered.
   fm_log "  check the fleet with:"
-  fm_log "    z_sub -e tcp/<workstation>:7447 -k '<rig>/joint_states'"
+  fm_log "    z_sub -e tcp/<workstation>:7447 -k 'fm_rec_01/joint_states'"
   fm_ok "client install complete."
 }
 

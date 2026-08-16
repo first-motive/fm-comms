@@ -26,6 +26,20 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.
+- **Per-host facts come from the machine identity card, never from a file here.**
+  The rig's namespace, its workspace, and its transport are read from
+  `/etc/fm/machine.json` (`~/.config/fm/machine.json` on macOS, `$FM_MACHINE_FILE`
+  under test) through the `fm_machine_*` readers in `lib.sh`. `/etc/fm-comms.env`
+  keeps only what every machine in the fleet shares. A per-host value written in
+  both places disagrees the day a rig is renamed, and the disagreement surfaces as
+  a topic nobody receives rather than as an error.
+- **A card with an unknown `schema_version` is refused, not guessed at.** Both
+  readers — `fm_machine_get` in `lib.sh`, `episodes/episodes/machine.py` in the
+  queryable — check the version before any field is used.
+- **Every generated config renders to stdout.** `./run.sh render
+  <router|bridge|episodes>` prints exactly what an install would write, and both
+  installers print the same text under `--dry-run`. A generation path that can
+  only be inspected by running it is not finished.
 - **The zenoh version is pinned in one place.** Every install path — brew tap,
   the Eclipse apt repo, the container image — resolves the same pinned version,
   so a router and a bridge never negotiate across a version gap.
@@ -43,9 +57,18 @@ shellcheck $(find . -name '*.sh' -not -path './.git/*')
 uv run --project episodes pytest -q
 ```
 
-The queryable's logic lives in `episodes/episodes/store.py` and `query.py`, which
-import no Zenoh at all; `service.py` is the only module that opens a session. Keep
-it that way — it is why the suite needs no router and no network.
+The queryable's logic lives in `episodes/episodes/store.py`, `query.py`, and
+`machine.py`, which import no Zenoh at all; `service.py` is the only module that
+opens a session. Keep it that way — it is why the suite needs no router and no
+network.
+
+The shell's own card reading is exercised by rendering against a fixture rather
+than a real machine:
+
+```bash
+FM_MACHINE_FILE=/tmp/machine.json FM_COMMS_ENV_FILE=/tmp/fm-comms.env \
+  ./run.sh render bridge
+```
 
 ## Layout
 

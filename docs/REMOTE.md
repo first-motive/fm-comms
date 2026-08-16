@@ -127,15 +127,18 @@ The desktop app takes the same endpoint as a `zenoh://` rig URL in Settings.
 
 ## 4. Smoke Test The Session
 
-Live topics from a rig, at the rig's namespace:
+Live topics from a rig, at the rig's namespace. That namespace is the rig's
+machine name with its hyphens turned into underscores — `fm-rec-01` publishes
+under `fm_rec_01` — so `./run.sh render show` on the rig tells you what to
+subscribe to:
 
 ```bash
-# Joint states from rig1 — should tick steadily.
-z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'rig1/joint_states'
+# Joint states from fm-rec-01 — should tick steadily.
+z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'fm_rec_01/joint_states'
 
-# What the fleet is publishing at all. Nothing back means the bridges are down,
-# or the topic is not on that rig's allowlist.
-z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'rig1/**'
+# What that rig is publishing at all. Nothing back means the bridge is down, or
+# the topic is not on the rig's allowlist.
+z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'fm_rec_01/**'
 ```
 
 Episodes from the processor:
@@ -182,7 +185,7 @@ outside the tailnet needs in.
 | Connects, no samples | `journalctl -u fm-zenoh-bridge -f` on the rig |
 | Some topics, not others | That rig's `allow` list in `zenoh/bridge-<profile>.json5` |
 | Samples arrive slowly | `pub_max_frequencies` in the same file — rates are capped on purpose |
-| Episode index empty | `FM_EPISODES_DIR` on the processor, and whether rsync has landed anything |
+| Episode index empty | `./run.sh render show` on the processor for the recordings path, and whether rsync has landed anything |
 | Episode fetch refused | The error reply carries the reason; usually the size limit |
 
 ## Revoking Access

@@ -51,18 +51,53 @@ Remove what the installer placed:
 ./run.sh --help
 ```
 
-Real endpoints are host-specific and are never committed. The installer places
-`/etc/fm-comms.env` from `systemd/fm-comms.env.example` on first run and stops so
-you can fill it in; the configs in `zenoh/` carry `${FM_...}` placeholders that
-the installer resolves from it into `/etc/fm-comms/`.
+### Where a value comes from
 
-A rig picks its topic set with `FM_BRIDGE_PROFILE` in that file:
+Nothing about a specific machine is typed into this repo. A host's own facts come
+from its **machine identity card** — `/etc/fm/machine.json` on Linux,
+`~/.config/fm/machine.json` on macOS, `$FM_MACHINE_FILE` anywhere — which
+[`fm-setup`](https://github.com/first-motive/fm-setup) writes with
+`fm machine init`. What the whole fleet shares stays in `/etc/fm-comms.env`, which
+the installer places from `systemd/fm-comms.env.example` on first run and which is
+never committed.
+
+| Value | Comes from |
+| --- | --- |
+| rig namespace (`fm-rec-01` → `fm_rec_01`) | card `name` |
+| recordings directory | card `workspace`, plus `/recordings` |
+| whether this host runs Zenoh at all | card `transport` |
+| where a `curl \| bash` install puts its checkout | card `workspace` |
+| router endpoint, router port, ROS domain | `/etc/fm-comms.env` — fleet-wide |
+| bridge profile | `/etc/fm-comms.env` — see below |
+
+A rig picks its topic set with `FM_BRIDGE_PROFILE`:
 
 ```
 recorder    head + wrist cameras, hand tracking, capture session, LiDAR
 processor   the dataset engine's run state and commands
 robot       joint states and TF out, Servo jog commands in
 ```
+
+That one is still typed, because the card says what kind of machine this is
+(`workstation`, `jetson`, `mac`) and not what work it does — a recorder rig and a
+processor rig are both jetsons. A `workload` field on the card would let it join
+the others; until then it lives in the env file.
+
+### Check a render before installing it
+
+The configs in `zenoh/` carry `${FM_...}` placeholders. `./run.sh render` resolves
+them exactly as an install would and prints the result instead of writing it:
+
+```bash
+./run.sh render show              # this host's facts, and where each came from
+./run.sh render bridge            # what /etc/fm-comms/bridge.json5 would be
+./run.sh render router
+./run.sh render episodes
+```
+
+Point `FM_MACHINE_FILE` and `FM_COMMS_ENV_FILE` at a pair of files to rehearse
+another host's render from a laptop. Both installers print the same text under
+`--dry-run`.
 
 Hosts that run the stack in Docker use the compose overlay instead of the
 systemd units — same configs, same pinned version:
@@ -84,9 +119,12 @@ fm/episodes/<id>/mcap      that episode's MCAP bytes               octet-stream
 ```
 
 ```bash
-./run.sh episodes install     # enable the service (reads FM_EPISODES_DIR)
+./run.sh episodes install     # enable the service
 ./run.sh episodes run         # or serve in the foreground
 ```
+
+It serves `<workspace>/recordings` from the identity card, so a rig says where its
+bags are once rather than in a unit file, an env file, and a developer's shell.
 
 Reads only — the rsync pipeline stays the source of truth for moving recordings
 between hosts. Index and fetch, no streaming replay: a query is one request and

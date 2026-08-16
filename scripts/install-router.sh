@@ -23,7 +23,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib.sh disable=SC1091
 . "$ROOT/lib.sh"
 
-ENV_FILE=/etc/fm-comms.env
+# lib.sh owns the path so the installers, the render verb, and the episodes verb
+# cannot disagree about which file the fleet-wide values live in.
+ENV_FILE="$FM_COMMS_ENV_FILE"
 CONF_DIR=/etc/fm-comms
 UNIT=fm-zenohd.service
 
@@ -77,6 +79,12 @@ do_install() {
   local os version
   os="$(fm_detect_os)"
   version="$(fm_zenoh_version)"
+
+  # The card decides whether this host belongs on the Zenoh fabric at all. A
+  # machine still on dds-lan gets a clear refusal here rather than a second,
+  # contradictory transport running beside the one it already speaks.
+  fm_comms_require_transport || return 1
+
   fm_log "Installing the Zenoh router (zenoh $version) on $os"
 
   case "$os" in
@@ -86,17 +94,16 @@ do_install() {
 
   place_env || return 0
 
-  # shellcheck source=/dev/null
-  [ "$FM_DRY_RUN" = "1" ] || . "$ENV_FILE"
-  FM_ROUTER_PORT="${FM_ROUTER_PORT:-7447}"
-
   fm_log "  rendering $CONF_DIR/router.json5"
   run sudo mkdir -p "$CONF_DIR"
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would render $ROOT/zenoh/router.json5 -> $CONF_DIR/router.json5"
+    # Print the config rather than describing it: a dry run whose only output is
+    # "would render X" cannot catch the mistake the render itself would make.
+    fm_log "  would write $CONF_DIR/router.json5:"
+    fm_comms_render router -
   else
     local tmp; tmp="$(mktemp)"
-    fm_render_template "$ROOT/zenoh/router.json5" "$tmp" FM_ROUTER_PORT
+    fm_comms_render router "$tmp"
     sudo install -m 0644 "$tmp" "$CONF_DIR/router.json5"
     rm -f "$tmp"
   fi
