@@ -3,9 +3,14 @@
 # install-bridge.sh — stand this rig up with a Zenoh ROS 2 bridge.
 #
 # The bridge joins the rig's local DDS graph and republishes the allowed topics
-# onto Zenoh under the rig's namespace. Which topics those are depends on what
-# the rig is: FM_BRIDGE_PROFILE in /etc/fm-comms.env selects
-# zenoh/bridge-<profile>.json5 (recorder | processor | robot).
+# onto Zenoh under the rig's namespace. That namespace is derived from this
+# machine's identity card and typed nowhere: fm-rec-01 becomes fm_rec_01. Which
+# topics cross depends on what work the rig does, which the card does not yet say
+# — FM_BRIDGE_PROFILE in /etc/fm-comms.env selects zenoh/bridge-<profile>.json5
+# (recorder | processor | robot).
+#
+# Read the render before installing it:
+#     ./run.sh render bridge
 #
 # Runnable standalone or through the front door:
 #     ./scripts/install-bridge.sh [install|uninstall]
@@ -24,7 +29,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib.sh disable=SC1091
 . "$ROOT/lib.sh"
 
-ENV_FILE=/etc/fm-comms.env
+# lib.sh owns the path so the installers, the render verb, and the episodes verb
+# cannot disagree about which file the fleet-wide values live in.
+ENV_FILE="$FM_COMMS_ENV_FILE"
 CONF_DIR=/etc/fm-comms
 UNIT=fm-zenoh-bridge.service
 
@@ -53,12 +60,13 @@ place_env() {
   fi
   fm_log "  placing $ENV_FILE from the example"
   run sudo install -m 0644 "$ROOT/systemd/fm-comms.env.example" "$ENV_FILE"
-  fm_warn "  fill in $ENV_FILE (router endpoint, rig namespace, profile), then re-run"
+  fm_warn "  fill in $ENV_FILE (router endpoint, bridge profile), then re-run"
+  fm_warn "  the rig's namespace is not in there — it comes from $(fm_machine_file)"
   return 1
 }
 
 do_install() {
-  local os version profile template
+  local os version
   os="$(fm_detect_os)"
   version="$(fm_zenoh_version)"
 
@@ -71,41 +79,27 @@ do_install() {
     return 1
   fi
 
+  # The card decides whether this rig belongs on the Zenoh fabric at all. A rig
+  # still on dds-lan gets a clear refusal here rather than a second, contradictory
+  # transport running beside the one it already speaks.
+  fm_comms_require_transport || return 1
+
   fm_log "Installing the Zenoh ROS 2 bridge (zenoh $version) on $os"
   install_linux "$version"
 
   place_env || return 0
 
-  # shellcheck source=/dev/null
-  [ "$FM_DRY_RUN" = "1" ] || . "$ENV_FILE"
-  profile="${FM_BRIDGE_PROFILE:-}"
-  if [ "$FM_DRY_RUN" != "1" ]; then
-    if ! printf '%s' "$profile" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
-      fm_err "FM_BRIDGE_PROFILE is unset or malformed in $ENV_FILE (want recorder | processor | robot)"
-      return 1
-    fi
-    template="$ROOT/zenoh/bridge-$profile.json5"
-    if [ ! -f "$template" ]; then
-      local known=() candidate name
-      for candidate in "$ROOT"/zenoh/bridge-*.json5; do
-        [ -f "$candidate" ] || continue
-        name="${candidate##*/bridge-}"
-        known+=("${name%.json5}")
-      done
-      fm_err "no config for profile '$profile'"
-      fm_err "  profiles this checkout carries: ${known[*]}"
-      return 1
-    fi
-  fi
-
-  fm_log "  rendering $CONF_DIR/bridge.json5 from the $profile profile"
+  fm_log "  rendering $CONF_DIR/bridge.json5"
   run sudo mkdir -p "$CONF_DIR"
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would render $ROOT/zenoh/bridge-<profile>.json5 -> $CONF_DIR/bridge.json5"
+    # Print the config rather than describing it: a dry run whose only output is
+    # "would render X" cannot catch the mistake the render itself would make —
+    # an empty namespace or an endpoint nobody filled in are both visible here.
+    fm_log "  would write $CONF_DIR/bridge.json5:"
+    fm_comms_render bridge -
   else
     local tmp; tmp="$(mktemp)"
-    fm_render_template "$template" "$tmp" \
-      FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
+    fm_comms_render bridge "$tmp"
     sudo install -m 0644 "$tmp" "$CONF_DIR/bridge.json5"
     rm -f "$tmp"
   fi

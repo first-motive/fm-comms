@@ -43,8 +43,12 @@ fm_err()  { printf '%s%s%s\n' "$FM_C_RED" "$*" "$FM_C_RESET" >&2; }
 
 # Print the brand banner. SHA-pin this string to fm-tools per repo so the brand
 # stays identical across every front door rather than drifting copy by copy.
+#
+# On stderr, not stdout: `./run.sh render bridge > bridge.json5` must produce a
+# config file and not a config file with a banner on line one. Chrome belongs on
+# the stream a terminal shows and a redirect drops.
 fm_banner() {
-  printf '%s\n' "── ${FM_BRAND} ──"
+  printf '%s\n' "── ${FM_BRAND} ──" >&2
 }
 
 # Echo the OS as linux | macos, or fail loudly on an unsupported platform.
@@ -96,6 +100,236 @@ fm_zenoh_version() {
   file="$(fm_comms_root)/zenoh/zenoh.version"
   [ -f "$file" ] || { fm_err "missing $file"; return 1; }
   sed -n 's/^FM_ZENOH_VERSION=\(.*\)$/\1/p' "$file" | head -1
+}
+
+# --- Machine identity --------------------------------------------------------
+#
+# Every host-level fact this repo renders into a config — the rig's namespace, the
+# workspace the recordings sit under, which transport the host is even on — comes
+# from the machine identity card that fm-setup writes. Reading it here rather than
+# retyping those facts in /etc/fm-comms.env is the whole point: a namespace typed
+# in two files disagrees the moment a rig is renamed, and the disagreement is
+# invisible until a topic lands under a prefix nobody is subscribed to.
+#
+# This repo only ever reads the card. `fm machine init` in fm-setup writes it.
+
+# The only card schema this checkout understands. A card stamped with anything
+# else is refused rather than guessed at: a field that changed meaning between
+# versions would otherwise be rendered straight into a running rig's config.
+FM_MACHINE_SCHEMA_VERSION=1
+
+# Echo the path to this machine's identity card, whether or not it exists.
+# FM_MACHINE_FILE overrides it, which is how a test and a rehearsal container
+# point at a card outside the real system paths.
+fm_machine_file() {
+  if [ -n "${FM_MACHINE_FILE:-}" ]; then
+    printf '%s\n' "$FM_MACHINE_FILE"
+    return 0
+  fi
+  case "$(uname -s)" in
+    Darwin) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fm/machine.json" ;;
+    *)      printf '%s\n' "/etc/fm/machine.json" ;;
+  esac
+}
+
+# Return success when this machine has an identity card. A machine without one is
+# not broken — a laptop running the desktop app in client mode has no workspace
+# and needs no card — so callers ask before they read.
+fm_machine_exists() { [ -f "$(fm_machine_file)" ]; }
+
+# fm_machine_get FIELD — echo one field from this machine's card.
+#
+# Fails when the card is missing, stamped with an unknown schema, unparseable, or
+# short of the field, so a caller that substitutes the output into a config can
+# never quietly proceed on an empty string.
+fm_machine_get() {
+  local field="$1" file version value
+  file="$(fm_machine_file)"
+  if [ ! -f "$file" ]; then
+    fm_err "no machine identity card at $file"
+    fm_err "  run 'fm machine init' on this host, or set FM_MACHINE_FILE to point at one"
+    return 1
+  fi
+  fm_require_cmd jq || return 1
+  version="$(jq -er '.schema_version // empty' "$file" 2>/dev/null)" || {
+    fm_err "$file carries no schema_version — it is not a machine identity card"
+    return 1
+  }
+  if [ "$version" != "$FM_MACHINE_SCHEMA_VERSION" ]; then
+    fm_err "$file is schema_version $version; this fm-comms reads $FM_MACHINE_SCHEMA_VERSION"
+    fm_err "  update fm-comms rather than editing the card — a guessed field would be"
+    fm_err "  rendered into a config and run, which is worse than refusing to render"
+    return 1
+  fi
+  value="$(jq -er --arg f "$field" '.[$f] // empty' "$file" 2>/dev/null)" || {
+    fm_err "the machine identity card has no '$field': $file"
+    return 1
+  }
+  printf '%s\n' "$value"
+}
+
+# fm_machine_namespace [NAME] — echo the ROS namespace derived from a machine
+# name, defaulting to this machine's.
+#
+# Derived, never typed. Hyphens become underscores because a ROS name may not
+# contain one: fm-rec-01 becomes fm_rec_01.
+fm_machine_namespace() {
+  local name="${1:-}"
+  [ -n "$name" ] || name="$(fm_machine_get name)" || return 1
+  printf '%s\n' "${name//-/_}"
+}
+
+# The transport profile this repo implements. The card names the profile every
+# process on a host sources, and this is the value it must hold for anything here
+# to belong on the machine at all.
+FM_COMMS_TRANSPORT=zenoh
+
+# Refuse to configure a host the card puts on another transport.
+#
+# A rig still on `dds-lan` has not been through the transport migration; placing a
+# bridge and a unit on it would start a second, contradictory comms path beside
+# the DDS one it is actually running. A machine with no card is not refused —
+# that is a laptop in client mode, and it is a legitimate thing to be.
+fm_comms_require_transport() {
+  local have
+  fm_machine_exists || return 0
+  have="$(fm_machine_get transport)" || return 1
+  [ "$have" = "$FM_COMMS_TRANSPORT" ] && return 0
+  if [ "${FM_COMMS_ALLOW_TRANSPORT_MISMATCH:-0}" = "1" ]; then
+    fm_warn "  this host's card says transport=$have — continuing anyway (FM_COMMS_ALLOW_TRANSPORT_MISMATCH=1)"
+    return 0
+  fi
+  fm_err "this host's identity card says transport=$have, and fm-comms configures $FM_COMMS_TRANSPORT"
+  fm_err "  migrate the host with 'fm machine init --transport $FM_COMMS_TRANSPORT' once its hardware"
+  fm_err "  has been validated, or set FM_COMMS_ALLOW_TRANSPORT_MISMATCH=1 to override for a bench test"
+  return 1
+}
+
+# --- Host configuration ------------------------------------------------------
+
+# Where the fleet-wide values live. Per-host facts moved to the identity card;
+# what remains here is what every host in the fleet shares — the router endpoint,
+# the DDS domain, the size ceiling — plus any deliberate per-host override.
+FM_COMMS_ENV_FILE="${FM_COMMS_ENV_FILE:-/etc/fm-comms.env}"
+
+# Load the env file when the host has one. Missing is not an error: a render can
+# be rehearsed on a machine that was never installed, and the caller decides
+# whether the values it wanted actually arrived.
+# Values are exported, not merely set: systemd hands this file to a unit as an
+# EnvironmentFile, and a caller that sources it without `set -a` gets variables
+# the child process it then launches cannot see — which is how a foreground run
+# and the unit end up reading two different directories.
+fm_comms_load_env() {
+  [ -f "$FM_COMMS_ENV_FILE" ] || return 0
+  set -a
+  # shellcheck source=/dev/null
+  . "$FM_COMMS_ENV_FILE"
+  set +a
+}
+
+# fm_comms_resolve — fill every template value for this host.
+#
+# The order is deliberate: an already-set environment variable wins, then the env
+# file, then the identity card. The card is last rather than first so that a
+# one-off `FM_RIG_NAMESPACE=… ./run.sh render bridge` still works for a rehearsal,
+# while the committed, installed path takes the card and nothing else.
+fm_comms_resolve() {
+  fm_comms_load_env
+
+  # The rig's namespace and its workspace are per-host facts, and the card is the
+  # only place either is written down.
+  if [ -z "${FM_RIG_NAMESPACE:-}" ] && fm_machine_exists; then
+    FM_RIG_NAMESPACE="$(fm_machine_namespace)" || return 1
+  fi
+  if [ -z "${FM_EPISODES_DIR:-}" ] && fm_machine_exists; then
+    # Recordings sit beside the checkouts under the workspace the card names. A
+    # hardcoded ~/recordings is exactly what the workspace field exists to delete.
+    FM_EPISODES_DIR="$(fm_machine_get workspace)/recordings" || return 1
+  fi
+
+  # Fleet-wide defaults, not host facts: every rig runs the same DDS domain and
+  # every router the same port, so these stay constants with an env-file escape.
+  FM_ROUTER_PORT="${FM_ROUTER_PORT:-7447}"
+  FM_ROS_DOMAIN_ID="${FM_ROS_DOMAIN_ID:-0}"
+
+  export FM_RIG_NAMESPACE FM_EPISODES_DIR FM_ROUTER_PORT FM_ROS_DOMAIN_ID
+}
+
+# Echo the bridge profile this rig runs: recorder | processor | robot.
+#
+# Still read from the env file. The card says what kind of machine this is
+# (workstation, jetson, mac) but not what work it does, and a recorder rig and a
+# processor rig are both jetsons — so the topic set cannot be derived from any
+# field the card currently carries. See the README for the proposed `workload`
+# field that would let this join the others.
+fm_comms_bridge_profile() {
+  local profile="${FM_BRIDGE_PROFILE:-}"
+  if [ -z "$profile" ]; then
+    fm_err "FM_BRIDGE_PROFILE is unset — set it in $FM_COMMS_ENV_FILE (recorder | processor | robot)"
+    return 1
+  fi
+  # The profile becomes a path segment, so hold it to the shape a filename can
+  # take — otherwise a stray value walks out of zenoh/ and renders something else.
+  if ! printf '%s' "$profile" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
+    fm_err "FM_BRIDGE_PROFILE is malformed: '$profile' (want lowercase, digits, dashes)"
+    return 1
+  fi
+  printf '%s\n' "$profile"
+}
+
+# Echo the bridge template this rig's profile selects, or list what exists.
+fm_comms_bridge_template() {
+  local profile template root known=() candidate name
+  root="$(fm_comms_root)"
+  profile="$(fm_comms_bridge_profile)" || return 1
+  template="$root/zenoh/bridge-$profile.json5"
+  if [ ! -f "$template" ]; then
+    for candidate in "$root"/zenoh/bridge-*.json5; do
+      [ -f "$candidate" ] || continue
+      name="${candidate##*/bridge-}"
+      known+=("${name%.json5}")
+    done
+    fm_err "no config for profile '$profile'"
+    fm_err "  profiles this checkout carries: ${known[*]:-none}"
+    return 1
+  fi
+  printf '%s\n' "$template"
+}
+
+# fm_comms_render KIND [DEST] — render one of this host's config files.
+#
+# DEST defaults to `-`, meaning stdout: rendering is the step most likely to be
+# wrong on a new rig, and a render nobody can read before it is installed can only
+# be debugged by installing it. Every caller — the two installers, the episodes
+# verb, and `./run.sh render` — comes through here, so what a dry run prints is
+# the same text the install writes.
+fm_comms_render() {
+  local kind="$1" dest="${2:--}" root template
+  root="$(fm_comms_root)"
+  fm_comms_resolve || return 1
+
+  case "$kind" in
+    router)
+      fm_render_template "$root/zenoh/router.json5" "$dest" FM_ROUTER_PORT
+      ;;
+    bridge)
+      template="$(fm_comms_bridge_template)" || return 1
+      fm_render_template "$template" "$dest" \
+        FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
+      ;;
+    episodes)
+      # The checkout and the account that owns it are read off this host rather
+      # than written down anywhere: the unit is rendered on the machine it runs on.
+      FM_COMMS_CHECKOUT="$root" \
+      FM_COMMS_USER="${FM_COMMS_USER:-${SUDO_USER:-$USER}}" \
+        fm_render_template "$root/systemd/fm-comms-episodes.service.in" "$dest" \
+          FM_COMMS_CHECKOUT FM_COMMS_USER FM_EPISODES_DIR
+      ;;
+    *)
+      fm_err "unknown render kind: $kind (use router | bridge | episodes)"
+      return 1
+      ;;
+  esac
 }
 
 # Fingerprint of the key Eclipse signs the Zenoh debian repo with, taken from the
@@ -161,6 +395,9 @@ fm_apt_add_zenoh_repo() {
 # JSON5 config happens to contain. Every named variable must be set and non-empty
 # — a config that silently keeps a literal ${FM_ROUTER_ENDPOINT} would start a
 # bridge that connects nowhere.
+#
+# A DEST of `-` writes to stdout, so the same code path serves an install and a
+# `./run.sh render` an operator reads before trusting it.
 fm_render_template() {
   local src="$1" dest="$2"; shift 2
   local name value body
@@ -169,7 +406,7 @@ fm_render_template() {
   for name in "$@"; do
     value="${!name:-}"
     if [ -z "$value" ]; then
-      fm_err "$name is unset — fill it in /etc/fm-comms.env before installing"
+      fm_err "$name is unset — it comes from this host's identity card or from $FM_COMMS_ENV_FILE"
       return 1
     fi
     # Substitute with bash parameter expansion, not sed: a value containing / or &
@@ -184,7 +421,11 @@ fm_render_template() {
     printf '%s' "$body" | grep -o '\${FM_[A-Z_]*}' | sort -u >&2
     return 1
   fi
-  printf '%s\n' "$body" >"$dest"
+  if [ "$dest" = "-" ]; then
+    printf '%s\n' "$body"
+  else
+    printf '%s\n' "$body" >"$dest"
+  fi
 }
 
 # Verify a file against an expected sha256 before it is executed. Picks whichever

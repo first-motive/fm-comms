@@ -11,9 +11,15 @@
 #     ./run.sh episodes install      install + enable the systemd unit
 #     ./run.sh episodes uninstall    remove the unit
 #
-# Configuration comes from /etc/fm-comms.env:
-#   FM_EPISODES_DIR         recorder output dir holding sessions.jsonl and the bags
-#   FM_EPISODES_MAX_BYTES   refuse to serve an MCAP larger than this in one reply
+# The recordings directory is a per-host fact and is derived, not typed: it is
+# `recordings` under the workspace this machine's identity card names. Setting
+# FM_EPISODES_DIR in /etc/fm-comms.env overrides that for a rig whose bags live
+# somewhere unusual. FM_EPISODES_MAX_BYTES — the ceiling above which an MCAP is
+# refused rather than returned in one reply — is fleet-wide and stays in the env
+# file.
+#
+# Read the unit before installing it:
+#     ./run.sh render episodes
 #
 # Python lives in episodes/ as its own uv project — it runs beside the bags, not
 # inside the ROS env, and there is no zenoh package for pixi or rosdep to supply.
@@ -26,7 +32,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib.sh disable=SC1091
 . "$ROOT/lib.sh"
 
-ENV_FILE=/etc/fm-comms.env
+# lib.sh owns the path so the installers, the render verb, and this verb cannot
+# disagree about which file the fleet-wide values live in.
+ENV_FILE="$FM_COMMS_ENV_FILE"
 UNIT=fm-comms-episodes.service
 
 run() {
@@ -40,9 +48,11 @@ run() {
 do_run() {
   fm_require_cmd uv
   # uv resolves and syncs the project on demand, so a first run on a fresh rig
-  # needs no separate install step.
-  # shellcheck source=/dev/null
-  [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+  # needs no separate install step. Resolving first means the foreground run and
+  # the unit read the same recordings directory rather than the service's Python
+  # falling back to a home-relative guess.
+  fm_comms_resolve
+  export FM_EPISODES_DIR
   cd "$ROOT/episodes"
   exec uv run episodes
 }
@@ -68,19 +78,14 @@ do_install() {
 
   fm_log "  rendering $UNIT"
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would render $ROOT/systemd/$UNIT.in -> /etc/systemd/system/$UNIT"
+    # Print the unit rather than describing it: the values that go wrong here are
+    # the account and the recordings path, and both are legible in the text.
+    fm_log "  would write /etc/systemd/system/$UNIT:"
+    fm_comms_render episodes -
   else
-    # shellcheck source=/dev/null
-    . "$ENV_FILE"
-    # The checkout and the account are properties of this host, not of the repo,
-    # so they are resolved here and substituted in — the unit hardcodes neither.
     local tmp
     tmp="$(mktemp)"
-    FM_COMMS_CHECKOUT="$ROOT" \
-    FM_COMMS_USER="${SUDO_USER:-$USER}" \
-    FM_EPISODES_DIR="${FM_EPISODES_DIR:-$HOME/recordings}" \
-      fm_render_template "$ROOT/systemd/$UNIT.in" "$tmp" \
-        FM_COMMS_CHECKOUT FM_COMMS_USER FM_EPISODES_DIR
+    fm_comms_render episodes "$tmp"
     sudo install -m 0644 "$tmp" "/etc/systemd/system/$UNIT"
     rm -f "$tmp"
   fi

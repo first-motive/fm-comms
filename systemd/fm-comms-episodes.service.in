@@ -6,10 +6,14 @@
 # `./run.sh episodes install` renders this with fm_render_template (the same path
 # the Zenoh configs take) into /etc/systemd/system/fm-comms-episodes.service.
 #
+# Read the render before installing it:
+#     ./run.sh render episodes
+#
 # Placeholders:
-#   FM_COMMS_CHECKOUT   this rig's fm-comms checkout
+#   FM_COMMS_CHECKOUT   this rig's fm-comms checkout, read off the running host
 #   FM_COMMS_USER       the account that owns the checkout and the recordings
-#   FM_EPISODES_DIR     recorder output directory holding sessions.jsonl
+#   FM_EPISODES_DIR     recorder output directory holding sessions.jsonl —
+#                       <workspace>/recordings, from the machine identity card
 
 [Unit]
 Description=First Motive episode queryable (Zenoh index + MCAP fetch)

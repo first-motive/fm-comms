@@ -6,14 +6,21 @@
 /// here — they are fetched through the episode queryable (scripts/episodes.sh),
 /// which serves MCAP bytes on demand rather than streaming them.
 ///
-/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it with envsubst
-/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/bridge.json5.
-/// Committed files carry placeholders only — never a real address.
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
+/// result to /etc/fm-comms/bridge.json5. Committed files carry placeholders only —
+/// never a real address. Read the render before installing it:
+///
+///     ./run.sh render bridge
 ///
 /// Placeholders:
-///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<workstation>:7447
-///   FM_RIG_NAMESPACE      this rig's name, e.g. proc1
-///   FM_ROS_DOMAIN_ID      the DDS domain the rig's nodes run on
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<workstation>:7447. Fleet-wide,
+///                         from /etc/fm-comms.env.
+///   FM_RIG_NAMESPACE      this rig's ROS namespace. Derived from the machine
+///                         identity card's name and typed nowhere: fm-rec-01
+///                         becomes fm_rec_01, because a ROS name may not carry
+///                         a hyphen.
+///   FM_ROS_DOMAIN_ID      the DDS domain the rig's nodes run on. Fleet-wide,
+///                         from /etc/fm-comms.env.
 {
   mode: "client",
   connect: {

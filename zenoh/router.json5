@@ -4,12 +4,15 @@
 /// is the one place the whole fleet meets. Nothing else runs a router: a second
 /// one would partition the fleet or duplicate every sample.
 ///
-/// This file is a TEMPLATE. `scripts/install-router.sh` renders it with envsubst
-/// against /etc/fm-comms.env and writes the result to /etc/fm-comms/router.json5.
-/// Committed files carry placeholders only — never a real address.
+/// This file is a TEMPLATE. `scripts/install-router.sh` renders it and writes the
+/// result to /etc/fm-comms/router.json5. Committed files carry placeholders only —
+/// never a real address. Read the render before installing it:
+///
+///     ./run.sh render router
 ///
 /// Placeholders:
-///   FM_ROUTER_PORT        TCP port to listen on (7447 by convention)
+///   FM_ROUTER_PORT        TCP port to listen on. Fleet-wide, from
+///                         /etc/fm-comms.env (7447 by convention).
 {
   mode: "router",
 
