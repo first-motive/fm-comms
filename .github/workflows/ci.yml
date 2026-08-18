@@ -17,6 +17,19 @@ jobs:
   drift:
     uses: first-motive/.github/.github/workflows/drift-check.yml@main
 
+  # No server-side branch protection exists on this repo, so a push straight to
+  # main is possible. The rendered pre-push hook refuses one locally; this
+  # notices the ones it cannot refuse and opens an issue naming the commit.
+  # The called job guards on push-to-default itself, so it skips on a PR.
+  # Job-level permissions replace the workflow-level block for this job alone:
+  # opening the issue needs issues:write, which the rest of CI must not have.
+  tripwire:
+    uses: first-motive/.github/.github/workflows/direct-push-tripwire.yml@main
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
