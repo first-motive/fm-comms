@@ -2,17 +2,19 @@
 #
 # install.sh — host-bootstrap front door for fm-comms.
 #
-# Places the Zenoh transport on this host for one role: the router (the office
-# workstation), a bridge (a rig), or a client (a laptop with the CLI only). The
-# per-role work lives in scripts/install-<role>.sh, each runnable standalone.
+# Places the Zenoh transport on this host for one role: the router (Rune, the
+# office Mac mini), a bridge (a rig, or a Mac running the cockpit), or a client
+# (a laptop with the CLI tools only). The per-role work lives in
+# scripts/install-<role>.sh, each runnable standalone; the bridge role dispatches
+# again by OS, to a systemd unit on Linux and a user LaunchAgent on macOS.
 #
 # Install (the URL is pinned to a release tag, never a moving branch):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.1/install.sh | bash -s -- --role router
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.2/install.sh | bash -s -- --role router
 #
 # Inspect before running (always available):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.1/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.2/install.sh -o install.sh
 #   less install.sh && bash install.sh --role router --dry-run
 #
 # Env overrides:
@@ -33,7 +35,7 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-comms}"
-FM_TAG="${FM_TAG:-v0.2.0-zenoh.1}"
+FM_TAG="${FM_TAG:-v0.2.0-zenoh.2}"
 FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
 
 FM_COMMS_ROLE="${FM_COMMS_ROLE:-}"
@@ -115,6 +117,7 @@ Usage: ./install.sh [install|uninstall] --role <role> [options]
 
 Options:
   --role NAME  which role this host plays (router | bridge | client)
+               bridge covers a Linux rig and a macOS cockpit
   -y, --yes    non-interactive; assume yes (CI mode)
   --dry-run    print what would happen, change nothing
   -h, --help   show this help
