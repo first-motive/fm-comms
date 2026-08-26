@@ -592,3 +592,63 @@ fm_verify_checksum() {
     return 1
   fi
 }
+
+# --- macOS zenohd install (router and client share it) -----------------------
+
+# Echo the version of the zenohd at $1, or nothing.
+fm_zenohd_version_at() {
+  "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+fm_install_zenohd_macos() {
+  local version="$1"
+  # The Homebrew tap has no per-version formula — it ships whatever is current
+  # (1.10.0 at the time of writing against a 1.9.0 pin) and Homebrew now refuses
+  # an untrusted tap without an interactive `brew trust`. Neither is acceptable
+  # for a router that must match the rigs' apt pin exactly and install
+  # unattended. So: keep a zenohd that already matches the pin, otherwise fetch
+  # Eclipse's standalone build of exactly that version into ~/.local/bin, the
+  # same place a manual install lands and where fm_zenohd_bin looks first.
+  local existing
+  if existing="$(command -v zenohd 2>/dev/null)" && [ -n "$existing" ]; then
+    if [ "$(fm_zenohd_version_at "$existing")" = "$version" ]; then
+      fm_log "  zenohd $version already at $existing"
+      return 0
+    fi
+    fm_warn "  $existing is not $version — installing the pinned build beside it"
+  fi
+  local arch
+  case "$(uname -m)" in
+    arm64 | aarch64) arch=aarch64 ;;
+    x86_64) arch=x86_64 ;;
+    *) fm_err "unsupported macOS arch: $(uname -m)"; return 1 ;;
+  esac
+  local name="zenoh-${version}-${arch}-apple-darwin-standalone.zip"
+  local url="https://github.com/eclipse-zenoh/zenoh/releases/download/${version}/${name}"
+  local dest="$HOME/.local/bin"
+  fm_log "  fetching $url"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would install zenohd $version to $dest"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp -d)"
+  curl -fsSL --proto '=https' -o "$tmp/$name" "$url"
+  unzip -q -o "$tmp/$name" -d "$tmp/x"
+  mkdir -p "$dest"
+  # The zip carries zenohd plus its plugins (rest, storage-manager) as flat files.
+  find "$tmp/x" -type f \( -name 'zenohd' -o -name '*.dylib' \) -exec cp {} "$dest/" \;
+  chmod +x "$dest/zenohd"
+  rm -rf "$tmp"
+  local got
+  got="$(fm_zenohd_version_at "$dest/zenohd")"
+  [ "$got" = "$version" ] || {
+    fm_err "installed zenohd reports '$got', expected $version"
+    return 1
+  }
+  fm_log "  zenohd $version installed at $dest/zenohd"
+  # A fresh shell may not have ~/.local/bin on PATH yet; the plist takes the
+  # absolute path, so the LaunchDaemon does not care. Later steps in this same
+  # run resolve through fm_zenohd_bin, which checks ~/.local/bin explicitly.
+  export PATH="$dest:$PATH"
+}
