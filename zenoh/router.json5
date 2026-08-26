@@ -18,24 +18,33 @@
 ///     ./run.sh render router
 ///
 /// Placeholders:
-///   FM_ROUTER_LISTEN      the one endpoint zenohd binds, tcp/<tailnet-ip>:<port>.
-///                         Resolved on the host at render time from `tailscale ip
-///                         -4` and FM_ROUTER_PORT (7447 by convention), so the
-///                         address is never written into a tracked file. Force it
-///                         with FM_ROUTER_BIND_IP on a host with no tailnet.
+///   FM_ROUTER_LISTEN      the JSON array of endpoints zenohd binds — the host's
+///                         LAN address and its tailnet address, both as
+///                         tcp/<ip>:<port>. Resolved on the host at render time
+///                         from the LAN interface (FM_ROUTER_LAN_IF, else the
+///                         default route) and `tailscale ip -4`, so neither
+///                         address is ever written into a tracked file. Force a
+///                         single one with FM_ROUTER_BIND_IP on a bench host.
 {
   mode: "router",
 
-  /// One endpoint, on the tailnet interface and nowhere else.
+  /// Two endpoints, and exactly two: the LAN address and the tailnet address.
   ///
-  /// Binding every interface would offer the fleet's whole topic graph to the
-  /// office LAN and — on the Mac mini — to its CI guest network as well. The
-  /// tailnet is already the fleet's authenticated perimeter, so the socket goes
-  /// there and the perimeter stays the one thing granting access. That is what
-  /// lets this run without TLS/mTLS. See docs/REMOTE.md for how a contractor is
-  /// granted router:7447 and nothing else.
+  /// In the office a rig connects over plain TCP on the switch it is already on;
+  /// off-site, or on a Wi-Fi link that filters multicast, the same rig connects
+  /// through the tailnet. Tailnet-only would put the Jetson's compressed camera
+  /// streams through WireGuard on its own CPU while it sits one port away, for no
+  /// gain. A rig that moves changes its endpoint, not its transport.
+  ///
+  /// Binding every interface is still refused. A wildcard would offer the fleet's
+  /// whole topic graph to anything that can reach the box — on the Mac mini, its
+  /// CI guest network included. The office LAN is a place we choose to be
+  /// reachable; the guest network is not. The tailnet remains the authenticated
+  /// perimeter for everything off-site, which is what lets this run without
+  /// TLS/mTLS. See docs/REMOTE.md for how a contractor is granted router:7447 and
+  /// nothing else.
   listen: {
-    endpoints: ["${FM_ROUTER_LISTEN}"],
+    endpoints: ${FM_ROUTER_LISTEN},
   },
 
   /// The fleet is explicit: bridges and clients are configured with this router's

@@ -65,15 +65,21 @@ install_macos() {
   fm_install_zenohd_macos "$1"
 }
 
+# Place the fleet-wide env file, then stop only if a value this role needs is
+# still missing — which, for a router, is none of them.
+#
+# The old version stopped on any first placement, so the first run of the router
+# installer always failed and pre-placing the file by hand was the workaround
+# (fm-comms#17, Rune, 2026-08-26). Nothing in the example is a router's to fill:
+# the port has a default and both bind addresses are read off the host. What a
+# bridge needs is FM_ROUTER_ENDPOINT, and that is checked in its own installer.
 place_env() {
   if [ -f "$ENV_FILE" ]; then
     fm_log "  $ENV_FILE exists; leaving it alone"
-    return 0
+  else
+    fm_log "  placing $ENV_FILE from the example"
+    run sudo install -m 0644 "$ROOT/systemd/fm-comms.env.example" "$ENV_FILE"
   fi
-  fm_log "  placing $ENV_FILE from the example"
-  run sudo install -m 0644 "$ROOT/systemd/fm-comms.env.example" "$ENV_FILE"
-  fm_warn "  fill in $ENV_FILE, then re-run this script"
-  return 1
 }
 
 # The Linux service path: a systemd unit, enabled and started.
@@ -112,6 +118,63 @@ install_daemon_macos() {
   fm_log "  watch it with: tail -f $LOG_DIR/zenohd.log"
 }
 
+# Check what the router actually bound, not whether the service manager exited 0.
+#
+# The install can succeed and the socket still be wrong: a stale config left over
+# from before the LAN endpoint was added, a tailnet that was not up when zenohd
+# started, a wildcard someone put in FM_ROUTER_LISTEN by hand. Each of those is a
+# fleet-wide fault that reads as a network problem days later, and each is
+# visible here in one line of lsof.
+#
+# Two listeners, and exactly two. A wildcard is refused outright — it would offer
+# the fleet's whole topic graph to anything that can reach the box, this
+# machine's own CI guest network included.
+verify_listeners() {
+  local port="${FM_ROUTER_PORT:-7447}" want listeners endpoint addr missing=""
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would check that zenohd listens on:"
+    fm_router_listen_list | sed 's/^/    /'
+    return 0
+  fi
+  want="$(fm_router_listen_list)" || return 1
+
+  # zenohd binds after launchd or systemd has started it, not before.
+  local waited=0 ok=0
+  while [ "$waited" -lt 15 ]; do
+    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    [ -n "$listeners" ] && { ok=1; break; }
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [ "$ok" != 1 ]; then
+    fm_err "nothing is listening on $port after ${waited}s"
+    fm_err "  read the log: $LOG_DIR/zenohd.err.log (macOS) or journalctl -u $UNIT (linux)"
+    return 1
+  fi
+
+  if printf '%s' "$listeners" | grep -qE '(\*|0\.0\.0\.0|\[::\]):'"$port"; then
+    fm_err "the router is bound to every interface; it must bind the LAN and the tailnet only"
+    printf '%s\n' "$listeners" >&2
+    return 1
+  fi
+
+  while IFS= read -r endpoint; do
+    [ -n "$endpoint" ] || continue
+    addr="${endpoint#tcp/}"
+    printf '%s' "$listeners" | grep -q "$addr" || missing="${missing:+$missing }$endpoint"
+  done <<EOF
+$want
+EOF
+  if [ -n "$missing" ]; then
+    fm_err "the router is listening, but not on: $missing"
+    printf '%s\n' "$listeners" >&2
+    return 1
+  fi
+
+  fm_log "  listening on:"
+  printf '%s\n' "$want" | sed 's/^/    /'
+}
+
 do_install() {
   local os version
   os="$(fm_detect_os)"
@@ -141,7 +204,7 @@ do_install() {
     macos) install_macos "$version" ;;
   esac
 
-  place_env || return 0
+  place_env
 
   fm_log "  rendering $CONF_DIR/router.json5"
   run sudo mkdir -p "$CONF_DIR"
@@ -161,6 +224,8 @@ do_install() {
     linux) install_unit_linux ;;
     macos) install_daemon_macos ;;
   esac
+
+  verify_listeners || return 1
 
   fm_ok "router install complete."
 }

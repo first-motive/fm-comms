@@ -246,27 +246,124 @@ fm_tailnet_ip() {
   return 1
 }
 
-# Echo the endpoint zenohd listens on: tcp/<tailnet-ip>:<port>.
+# Echo this host's LAN IPv4 address: the address on the interface
+# FM_ROUTER_LAN_IF names, or on the one the default route already uses.
 #
-# Binding to every interface (tcp/[::]:7447) was the old default and is what this
-# replaces. The router now sits on an always-on office machine that also carries
-# an office LAN and, on Rune, an ephemeral CI guest network — listening on all of
-# them offers the fleet's whole topic graph to anything that can reach the box.
-# The tailnet is already the fleet's authenticated perimeter, so the socket is
-# put there and nowhere else.
+# Picked by interface, never by guess. Rune carries three LAN addresses — wired,
+# Wi-Fi, and the bridge its CI guests sit behind — and "the first address that is
+# not loopback" binds the router to whichever one the kernel happened to list
+# first. That is a socket nobody can predict, and a fleet that stops routing
+# after an unrelated reboot changed the order.
 #
-# FM_ROUTER_BIND_IP forces the address for a host with no tailnet — a two-container
-# CI smoke, or a bench test on an isolated LAN.
-fm_router_listen() {
-  local ip="${FM_ROUTER_BIND_IP:-}"
-  if [ -z "$ip" ]; then
-    ip="$(fm_tailnet_ip)" || {
-      fm_err "cannot resolve this host's tailnet address, and the router binds to the tailnet only"
-      fm_err "  bring Tailscale up on this host, or set FM_ROUTER_BIND_IP=<addr> for a bench run"
+# A Tailscale interface is refused here rather than accepted as a LAN one. The
+# router binds the tailnet separately; a host whose default route runs over an
+# exit node would otherwise resolve the same address twice and bind one socket
+# where the gate expects two.
+fm_lan_ip() {
+  local iface="${FM_ROUTER_LAN_IF:-}" ip
+  case "$(uname -s)" in
+    Darwin)
+      [ -n "$iface" ] || iface="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}')"
+      [ -n "$iface" ] || {
+        fm_err "this host has no default route — name the LAN interface with FM_ROUTER_LAN_IF=<if>"
+        return 1
+      }
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null)"
+      ;;
+    *)
+      [ -n "$iface" ] || iface="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
+      [ -n "$iface" ] || {
+        fm_err "this host has no default route — name the LAN interface with FM_ROUTER_LAN_IF=<if>"
+        return 1
+      }
+      ip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+      ;;
+  esac
+  case "$iface" in
+    tailscale*|utun*)
+      fm_err "'$iface' is a Tailscale interface, and the router binds the tailnet separately"
+      fm_err "  name the LAN interface explicitly: FM_ROUTER_LAN_IF=<if>"
       return 1
-    }
+      ;;
+  esac
+  if [ -z "$ip" ]; then
+    fm_err "interface '$iface' carries no IPv4 address"
+    fm_err "  name the LAN interface explicitly: FM_ROUTER_LAN_IF=<if>"
+    return 1
   fi
-  printf 'tcp/%s:%s\n' "$ip" "${FM_ROUTER_PORT:-7447}"
+  printf '%s\n' "$ip"
+}
+
+# Echo the endpoints zenohd binds, one per line.
+#
+# Two of them, and exactly two: the LAN address and the tailnet address. In the
+# office a rig reaches the router over plain TCP on the switch it is already
+# plugged into; off-site, or on a Wi-Fi link that filters multicast, the same rig
+# reaches it through the tailnet. Tailnet-only would push the Jetson's compressed
+# camera streams through WireGuard on its own CPU while it sits one switch port
+# away, for no gain. A rig that moves changes its FM_ROUTER_ENDPOINT, not its
+# transport.
+#
+# Neither address is written into a tracked file: both are read off the host at
+# render time, because both are per-host facts.
+#
+# Binding every interface (tcp/[::]:7447) was the old default and is what this
+# replaces — it offers the fleet's whole topic graph to anything that can reach
+# the box, the CI guest network on Rune included.
+#
+# FM_ROUTER_BIND_IP forces a single address on a host with neither a LAN nor a
+# tailnet worth binding: a two-container CI smoke, or a bench test.
+fm_router_listen() {
+  local port="${FM_ROUTER_PORT:-7447}" lan tailnet
+  if [ -n "${FM_ROUTER_BIND_IP:-}" ]; then
+    printf 'tcp/%s:%s\n' "$FM_ROUTER_BIND_IP" "$port"
+    return 0
+  fi
+  lan="$(fm_lan_ip)" || {
+    fm_err "cannot resolve this host's LAN address, and the router binds the LAN and the tailnet"
+    fm_err "  set FM_ROUTER_LAN_IF=<if>, or FM_ROUTER_BIND_IP=<addr> for a bench run"
+    return 1
+  }
+  tailnet="$(fm_tailnet_ip)" || {
+    fm_err "cannot resolve this host's tailnet address, and the router binds the LAN and the tailnet"
+    fm_err "  bring Tailscale up on this host, or set FM_ROUTER_BIND_IP=<addr> for a bench run"
+    return 1
+  }
+  printf 'tcp/%s:%s\n' "$lan" "$port"
+  printf 'tcp/%s:%s\n' "$tailnet" "$port"
+}
+
+# Echo the endpoints this host will actually bind, one per line, honouring the
+# override. Every consumer goes through here — the render and the installer's
+# after-the-fact check — so what is verified is what was rendered.
+#
+# FM_ROUTER_LISTEN overrides the whole list, written however an operator wrote it
+# — commas, spaces, or both — so a bench host can name its own endpoints without
+# the two resolvers above running at all.
+fm_router_listen_list() {
+  local endpoints="${FM_ROUTER_LISTEN:-}"
+  if [ -n "$endpoints" ]; then
+    # Both separators map to a newline; the set form is deliberate, not a
+    # word-for-word replacement.
+    # shellcheck disable=SC2020
+    printf '%s' "$endpoints" | tr ', ' '\n\n' | grep -v '^$' || true
+    return 0
+  fi
+  fm_router_listen
+}
+
+# Echo those endpoints as the JSON array the router template drops in.
+fm_router_listen_json() {
+  local endpoints line out=""
+  endpoints="$(fm_router_listen_list)" || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    out="${out:+$out, }\"$line\""
+  done <<EOF
+$endpoints
+EOF
+  [ -n "$out" ] || { fm_err "no listen endpoint resolved for the router"; return 1; }
+  printf '[%s]\n' "$out"
 }
 
 # --- The router on macOS -----------------------------------------------------
@@ -276,9 +373,21 @@ fm_router_listen() {
 # a label that disagrees with the filename leaves a daemon nothing can stop.
 FM_LAUNCHD_LABEL=ai.firstmotive.zenohd
 
+# The Mac bridge's LaunchAgent label, on the same rule. A LaunchAgent and not a
+# Daemon: the Mac is a laptop running a cockpit, and its bridge is only useful
+# while someone is logged in and looking at the fleet.
+FM_LAUNCHD_BRIDGE_LABEL=ai.firstmotive.zenoh-bridge
+
 # Where the rendered configs and the daemon's logs go on a router host.
 FM_COMMS_CONF_DIR="${FM_COMMS_CONF_DIR:-/etc/fm-comms}"
 FM_COMMS_LOG_DIR_DEFAULT="${FM_COMMS_LOG_DIR_DEFAULT:-/usr/local/var/log/fm-comms}"
+
+# Where the Mac bridge keeps its rendered config and its logs. Under the user's
+# own config dir, not /etc: a LaunchAgent runs as the logged-in account, and an
+# install that needed sudo to place a laptop's bridge config would be the only
+# step on the Mac that did.
+FM_COMMS_USER_CONF_DIR="${FM_COMMS_USER_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/fm-comms}"
+FM_COMMS_USER_LOG_DIR="${FM_COMMS_USER_LOG_DIR:-$HOME/Library/Logs/fm-comms}"
 
 # Echo the absolute path to zenohd.
 #
@@ -295,6 +404,23 @@ fm_zenohd_bin() {
     [ -x "$prefix/bin/zenohd" ] && { printf '%s\n' "$prefix/bin/zenohd"; return 0; }
   done
   fm_err "zenohd is not on this host — install it first (./install.sh --role router)"
+  return 1
+}
+
+# Echo the absolute path to zenoh-bridge-ros2dds, on the same rule as zenohd:
+# launchd resolves no PATH, so the plist needs the real location.
+fm_zenoh_bridge_bin() {
+  local found
+  found="$(command -v zenoh-bridge-ros2dds 2>/dev/null)" && [ -n "$found" ] && {
+    printf '%s\n' "$found"; return 0
+  }
+  local prefix
+  for prefix in "$HOME/.local" /opt/homebrew /usr/local /usr; do
+    [ -x "$prefix/bin/zenoh-bridge-ros2dds" ] && {
+      printf '%s\n' "$prefix/bin/zenoh-bridge-ros2dds"; return 0
+    }
+  done
+  fm_err "zenoh-bridge-ros2dds is not on this host — install it first (./install.sh --role bridge)"
   return 1
 }
 
@@ -332,6 +458,29 @@ fm_comms_load_env() {
   set +a
 }
 
+# fm_comms_env_unfilled KEY... — echo the named keys this host has not filled in.
+#
+# The installers place /etc/fm-comms.env from the example and then have to decide
+# whether to stop and ask for it to be edited. "The file was just created" is the
+# wrong test: the example already carries every fleet-wide default, and a router
+# needs nothing else from it — stopping there made the first run of the router
+# installer always fail, and pre-placing the file by hand the workaround
+# (fm-comms#17, Rune, 2026-08-26). The right test is whether the values THIS role
+# needs are actually present, which is what this answers.
+#
+# A key is unfilled when it is empty or still carries the example's CHANGEME.
+fm_comms_env_unfilled() {
+  local key value missing=""
+  fm_comms_load_env
+  for key in "$@"; do
+    value="${!key:-}"
+    case "$value" in
+      "" | *CHANGEME*) missing="${missing:+$missing }$key" ;;
+    esac
+  done
+  [ -z "$missing" ] || printf '%s\n' "$missing"
+}
+
 # fm_comms_resolve — fill every template value for this host.
 #
 # The order is deliberate: an already-set environment variable wins, then the env
@@ -360,7 +509,7 @@ fm_comms_resolve() {
   export FM_RIG_NAMESPACE FM_EPISODES_DIR FM_ROUTER_PORT FM_ROS_DOMAIN_ID
 }
 
-# Echo the bridge profile this rig runs: recorder | processor | robot.
+# Echo the bridge profile this machine runs: recorder | processor | robot | cockpit.
 #
 # Taken from the card's `workload`, which is the field that answers the question
 # `role` cannot — a recorder rig and a processor rig are both jetsons. That was
@@ -383,7 +532,7 @@ fm_comms_bridge_profile() {
   fi
   if [ -z "$profile" ]; then
     fm_err "no bridge profile for this host"
-    fm_err "  the card names one: fm machine init --workload <recorder|processor|robot>"
+    fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|cockpit>"
     fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
   fi
@@ -429,13 +578,14 @@ fm_comms_render() {
 
   case "$kind" in
     router)
-      # Resolved here rather than in fm_comms_resolve: only the router binds a
-      # socket, and a recorder rendering its bridge must not be made to fail
+      # Resolved here rather than in fm_comms_resolve: only the router binds
+      # sockets, and a recorder rendering its bridge must not be made to fail
       # because the laptop it is being rehearsed from has no tailnet.
-      local listen="${FM_ROUTER_LISTEN:-}"
-      if [ -z "$listen" ]; then
-        listen="$(fm_router_listen)" || return 1
-      fi
+      #
+      # The template takes the whole JSON array, not one address, because the
+      # router binds two: the LAN and the tailnet.
+      local listen
+      listen="$(fm_router_listen_json)" || return 1
       FM_ROUTER_LISTEN="$listen" \
         fm_render_template "$root/zenoh/router.json5" "$dest" FM_ROUTER_LISTEN
       ;;
@@ -449,16 +599,22 @@ fm_comms_render() {
       # so `./run.sh render launchd` shows exactly what an install would load —
       # a plist that can only be inspected by loading it is how a Mac ends up
       # running a daemon nobody can account for.
-      local listen="${FM_ROUTER_LISTEN:-}"
-      if [ -z "$listen" ]; then
-        listen="$(fm_router_listen)" || return 1
-      fi
       FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-$(fm_zenohd_bin)}" \
       FM_ROUTER_CONFIG="${FM_ROUTER_CONFIG:-$FM_COMMS_CONF_DIR/router.json5}" \
       FM_COMMS_USER="${FM_COMMS_USER:-${SUDO_USER:-$USER}}" \
       FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}" \
         fm_render_template "$root/launchd/$FM_LAUNCHD_LABEL.plist.in" "$dest" \
           FM_ZENOHD_BIN FM_ROUTER_CONFIG FM_COMMS_USER FM_COMMS_LOG_DIR
+      ;;
+    launchagent)
+      # The Mac bridge's LaunchAgent, on the same rule as the router's plist.
+      # The domain travels in the plist rather than an EnvironmentFile: launchd
+      # reads no such thing, and the Mac has no /etc/fm-comms.env to read.
+      FM_ZENOH_BRIDGE_BIN="${FM_ZENOH_BRIDGE_BIN:-$(fm_zenoh_bridge_bin)}" \
+      FM_BRIDGE_CONFIG="${FM_BRIDGE_CONFIG:-$FM_COMMS_USER_CONF_DIR/bridge.json5}" \
+      FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_USER_LOG_DIR}" \
+        fm_render_template "$root/launchd/$FM_LAUNCHD_BRIDGE_LABEL.plist.in" "$dest" \
+          FM_ZENOH_BRIDGE_BIN FM_BRIDGE_CONFIG FM_COMMS_LOG_DIR FM_ROS_DOMAIN_ID
       ;;
     episodes)
       # The checkout and the account that owns it are read off this host rather
@@ -469,7 +625,7 @@ fm_comms_render() {
           FM_COMMS_CHECKOUT FM_COMMS_USER FM_EPISODES_DIR
       ;;
     *)
-      fm_err "unknown render kind: $kind (use router | bridge | launchd | episodes)"
+      fm_err "unknown render kind: $kind (use router | bridge | launchd | launchagent | episodes)"
       return 1
       ;;
   esac
@@ -601,26 +757,41 @@ fm_verify_checksum() {
   fi
 }
 
-# --- macOS zenohd install (router and client share it) -----------------------
+# --- macOS binaries (router, client, and the Mac bridge share this) ----------
 
-# Echo the version of the zenohd at $1, or nothing.
-fm_zenohd_version_at() {
+# Echo the version the binary at $1 reports, or nothing.
+fm_zenoh_version_at() {
   "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
 }
 
-fm_install_zenohd_macos() {
-  local version="$1"
-  # The Homebrew tap has no per-version formula — it ships whatever is current
-  # (1.10.0 at the time of writing against a 1.9.0 pin) and Homebrew now refuses
-  # an untrusted tap without an interactive `brew trust`. Neither is acceptable
-  # for a router that must match the rigs' apt pin exactly and install
-  # unattended. So: keep a zenohd that already matches the pin, otherwise fetch
-  # Eclipse's standalone build of exactly that version into ~/.local/bin, the
-  # same place a manual install lands and where fm_zenohd_bin looks first.
+# Kept under its old name: install-client.sh and install-router.sh both call it.
+fm_zenohd_version_at() { fm_zenoh_version_at "$1"; }
+
+# Where a macOS install of either binary lands. The same place a manual install
+# goes, and the place fm_zenohd_bin and fm_zenoh_bridge_bin look first.
+FM_MACOS_BIN_DIR="${FM_MACOS_BIN_DIR:-$HOME/.local/bin}"
+
+# fm_install_zenoh_macos REPO ASSET_STEM BINARY VERSION — fetch one Eclipse
+# standalone build and put it on this Mac at exactly that version.
+#
+# The Homebrew tap has no per-version formula — it ships whatever is current
+# (1.10.0 at the time of writing against a 1.9.0 pin) and Homebrew now refuses an
+# untrusted tap without an interactive `brew trust`. Neither is acceptable for a
+# fleet that must match the rigs' apt pin exactly and install unattended. So:
+# keep a binary that already matches the pin, otherwise fetch Eclipse's
+# standalone build of exactly that version.
+#
+# Both macOS binaries come from the same shape of release asset — zenohd from
+# eclipse-zenoh/zenoh, zenoh-bridge-ros2dds from eclipse-zenoh/zenoh-plugin-ros2dds
+# — so the fetch, the unzip, and the version assertion are written once. A second
+# copy is how a router and a Mac bridge end up installed by two slightly
+# different rules.
+fm_install_zenoh_macos() {
+  local repo="$1" stem="$2" binary="$3" version="$4"
   local existing
-  if existing="$(command -v zenohd 2>/dev/null)" && [ -n "$existing" ]; then
-    if [ "$(fm_zenohd_version_at "$existing")" = "$version" ]; then
-      fm_log "  zenohd $version already at $existing"
+  if existing="$(command -v "$binary" 2>/dev/null)" && [ -n "$existing" ]; then
+    if [ "$(fm_zenoh_version_at "$existing")" = "$version" ]; then
+      fm_log "  $binary $version already at $existing"
       return 0
     fi
     fm_warn "  $existing is not $version — installing the pinned build beside it"
@@ -631,12 +802,12 @@ fm_install_zenohd_macos() {
     x86_64) arch=x86_64 ;;
     *) fm_err "unsupported macOS arch: $(uname -m)"; return 1 ;;
   esac
-  local name="zenoh-${version}-${arch}-apple-darwin-standalone.zip"
-  local url="https://github.com/eclipse-zenoh/zenoh/releases/download/${version}/${name}"
-  local dest="$HOME/.local/bin"
+  local name="${stem}-${version}-${arch}-apple-darwin-standalone.zip"
+  local url="https://github.com/${repo}/releases/download/${version}/${name}"
+  local dest="$FM_MACOS_BIN_DIR"
   fm_log "  fetching $url"
-  if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would install zenohd $version to $dest"
+  if [ "${FM_DRY_RUN:-0}" = "1" ]; then
+    fm_log "  would install $binary $version to $dest"
     return 0
   fi
   local tmp
@@ -644,19 +815,28 @@ fm_install_zenohd_macos() {
   curl -fsSL --proto '=https' -o "$tmp/$name" "$url"
   unzip -q -o "$tmp/$name" -d "$tmp/x"
   mkdir -p "$dest"
-  # The zip carries zenohd plus its plugins (rest, storage-manager) as flat files.
-  find "$tmp/x" -type f \( -name 'zenohd' -o -name '*.dylib' \) -exec cp {} "$dest/" \;
-  chmod +x "$dest/zenohd"
+  # The zip carries the binary plus its plugins as flat files.
+  find "$tmp/x" -type f \( -name "$binary" -o -name '*.dylib' \) -exec cp {} "$dest/" \;
+  chmod +x "$dest/$binary"
   rm -rf "$tmp"
   local got
-  got="$(fm_zenohd_version_at "$dest/zenohd")"
+  got="$(fm_zenoh_version_at "$dest/$binary")"
   [ "$got" = "$version" ] || {
-    fm_err "installed zenohd reports '$got', expected $version"
+    fm_err "installed $binary reports '$got', expected $version"
     return 1
   }
-  fm_log "  zenohd $version installed at $dest/zenohd"
-  # A fresh shell may not have ~/.local/bin on PATH yet; the plist takes the
-  # absolute path, so the LaunchDaemon does not care. Later steps in this same
-  # run resolve through fm_zenohd_bin, which checks ~/.local/bin explicitly.
+  fm_log "  $binary $version installed at $dest/$binary"
+  # A fresh shell may not have ~/.local/bin on PATH yet; every plist takes the
+  # absolute path, so launchd does not care. Later steps in this same run resolve
+  # through fm_zenohd_bin / fm_zenoh_bridge_bin, which check this dir explicitly.
   export PATH="$dest:$PATH"
+}
+
+fm_install_zenohd_macos() {
+  fm_install_zenoh_macos eclipse-zenoh/zenoh zenoh zenohd "$1"
+}
+
+fm_install_zenoh_bridge_macos() {
+  fm_install_zenoh_macos eclipse-zenoh/zenoh-plugin-ros2dds \
+    zenoh-plugin-ros2dds zenoh-bridge-ros2dds "$1"
 }
