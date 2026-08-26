@@ -11,6 +11,7 @@
 #     ./run.sh render bridge            what /etc/fm-comms/bridge.json5 would be
 #     ./run.sh render router            what /etc/fm-comms/router.json5 would be
 #     ./run.sh render launchd           the router's macOS LaunchDaemon plist
+#     ./run.sh render launchagent       the Mac bridge's LaunchAgent plist
 #     ./run.sh render episodes          what the episodes unit would be
 #     ./run.sh render show              the host facts every render resolves from
 #     ./run.sh render bridge -o out.json5
@@ -33,11 +34,12 @@ render — print this host's config as the installers would write it
 
 Usage: ./run.sh render <what> [-o FILE]
 
-  router      the zenohd config
-  launchd     the router's macOS LaunchDaemon plist
-  bridge      the ROS 2 bridge config for this rig's workload
-  episodes    the episode queryable's systemd unit
-  show        the resolved host facts, one per line
+  router       the zenohd config
+  launchd      the router's macOS LaunchDaemon plist
+  bridge       the ROS 2 bridge config for this machine's workload
+  launchagent  the Mac bridge's LaunchAgent plist
+  episodes     the episode queryable's systemd unit
+  show         the resolved host facts, one per line
 
 Options:
   -o, --output FILE   write there instead of stdout
@@ -73,10 +75,16 @@ show() {
   fm_log "  profile       $(fm_comms_bridge_profile 2>/dev/null || echo '<none — this host runs no bridge>')"
   fm_log "  router        ${FM_ROUTER_ENDPOINT:-<unset>}"
   fm_log "  router port   ${FM_ROUTER_PORT:-<unset>}"
-  # The bind address only matters on the router itself, and resolving it needs a
-  # tailnet — so it is reported when it resolves and named as absent when it does
-  # not, rather than failing a `render show` run from a laptop.
-  fm_log "  router listen $(fm_router_listen 2>/dev/null || echo '<no tailnet on this host>')"
+  # The bind addresses only matter on the router itself, and resolving them needs
+  # a LAN interface and a tailnet — so they are reported when they resolve and
+  # named as absent when they do not, rather than failing a `render show` run from
+  # a laptop. Two of them on a router: the LAN address and the tailnet address.
+  local listen
+  if listen="$(fm_router_listen_list 2>/dev/null)" && [ -n "$listen" ]; then
+    fm_log "  router listen $(printf '%s' "$listen" | paste -sd' ' -)"
+  else
+    fm_log "  router listen <this host resolves no LAN + tailnet pair>"
+  fi
   fm_log "  ROS domain    ${FM_ROS_DOMAIN_ID:-<unset>}"
   fm_log "  episodes dir  ${FM_EPISODES_DIR:-<unset>}"
 }
@@ -101,7 +109,7 @@ main() {
 
   case "$what" in
     show) show ;;
-    router|launchd|bridge|episodes) fm_comms_render "$what" "$dest" ;;
+    router|launchd|launchagent|bridge|episodes) fm_comms_render "$what" "$dest" ;;
     *) fm_err "unknown render target: $what"; usage; return 1 ;;
   esac
 }

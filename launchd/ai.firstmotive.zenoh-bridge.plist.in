@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ai.firstmotive.zenoh-bridge — the ROS 2 bridge on a cockpit Mac.
+
+  A TEMPLATE, hence the .in suffix. launchd expands nothing at load time, so every
+  path here must be literal by the time launchd reads the file;
+  `scripts/install-bridge.sh` renders it with fm_render_template, the same path
+  the router's plist and the Zenoh configs take.
+
+  A LaunchAgent and not a LaunchDaemon, which is the opposite call from the
+  router's beside it. The router must come up at boot with nobody logged in —
+  the fleet has no discovery point until it does. This bridge exists to give one
+  person's ROS tools a view of the fleet, so it belongs to that person's login
+  session and goes away with it. Running it as a daemon would keep a Mac holding
+  a router session, and publishing teleop topics, long after anyone was there.
+
+  Placeholders:
+    FM_ZENOH_BRIDGE_BIN   absolute path to zenoh-bridge-ros2dds
+    FM_BRIDGE_CONFIG      the rendered bridge.json5
+    FM_COMMS_LOG_DIR      where stdout and stderr land
+    FM_ROS_DOMAIN_ID      the DDS domain this Mac's nodes run on
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.firstmotive.zenoh-bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${FM_ZENOH_BRIDGE_BIN}</string>
+    <string>--config</string>
+    <string>${FM_BRIDGE_CONFIG}</string>
+  </array>
+
+  <!-- launchd reads no EnvironmentFile, and a Mac carries no /etc/fm-comms.env,
+       so the two values the bridge needs from the environment are rendered in.
+
+       ROS_DISTRO because the bridge maps DDS types and QoS per distro and
+       assumes `iron` when it is unset; every First Motive machine runs Humble.
+       ROS_DOMAIN_ID because the bridge joins this Mac's own DDS graph and must
+       be on the same domain as the nodes it is bridging for. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ROS_DISTRO</key>
+    <string>humble</string>
+    <key>ROS_DOMAIN_ID</key>
+    <string>${FM_ROS_DOMAIN_ID}</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- A laptop wakes up before its network does, and the router may be
+       unreachable for a while after that. launchd would otherwise stop
+       respawning a job that exits repeatedly, leaving the Mac blind to the fleet
+       until someone noticed and reloaded it by hand. Ten seconds between
+       attempts, no ceiling — the same call as the router's plist. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenoh-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenoh-bridge.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
