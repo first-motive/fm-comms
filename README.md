@@ -4,21 +4,38 @@ Zenoh transport for First Motive's inter-device links.
 
 ## What
 
-Every First Motive device — the office workstation, the recorder and processor
-rigs, a desktop or phone on the tailnet — talks to the others over one comms
-fabric. `fm-comms` holds that fabric's configuration and the scripts that deploy
-it: a single `zenohd` router on the workstation and a
-`zenoh-bridge-ros2dds` per robot, so ROS 2 traffic crosses Wi-Fi and the WAN
-without every host needing to see every other host's DDS multicast.
+Every First Motive device — the workstation, the recorder and processor rigs, a
+desktop or phone on the tailnet — talks to the others over one comms fabric.
+`fm-comms` holds that fabric's configuration and the scripts that deploy it: a
+single `zenohd` router and a `zenoh-bridge-ros2dds` per host, so ROS 2 traffic
+crosses Wi-Fi and the WAN without every host needing to see every other host's
+DDS multicast.
 
-This repo carries **no ROS packages and no application code** — only configs,
-systemd units, a compose overlay, and the install scripts that place them. It is
-vendored into the [`fm-ros2`](https://github.com/first-motive/fm-ros2) workspace
-at `comms/` (and carries a `COLCON_IGNORE` so colcon skips it), the same way
+![Zenoh transport](docs/diagrams/transport.svg)
+
+DDS no longer crosses a network at all. Each host keeps a loopback-only DDS
+graph, and its bridge republishes only the topics its profile allows. The router
+runs on Rune, the always-on office Mac mini — on that machine's host under
+launchd, bound to the tailnet interface, and never inside its CI guest. It is
+not on the GPU workstation, because that machine is wiped, rebooted, and loaded
+with sim and inference, and every reboot would take the fleet's discovery point
+with it.
+
+This repo carries **no ROS packages and no application code**, with one named
+exception. It is otherwise configs, systemd units, a launchd job, a compose
+overlay, and the install scripts that place them. It is vendored into the
+[`fm-ros2`](https://github.com/first-motive/fm-ros2) workspace at `comms/` (and
+carries a `COLCON_IGNORE` so colcon skips it), the same way
 [`fm-docker`](https://github.com/first-motive/fm-docker) is.
 
-Zenoh is opt-in. `fm-ros2` runs the `foxglove` comms profile by default, and
-nothing here is reachable until a host selects the `zenoh` profile.
+The exception is `episodes/`, the episode queryable. It is Python, and it stays
+here because what it implements is a transport surface rather than a behaviour:
+it answers Zenoh queries on `fm/episodes/**`, and its whole reason to exist is
+that MCAP bytes must NOT be streamed as topics across the fabric. Moving it to a
+package repo would put half of one wire contract in each of two repos. Its logic
+imports no Zenoh at all — `store.py`, `query.py`, and `machine.py` are pure, and
+`service.py` is the only module that opens a session — which is why its test
+suite needs neither a router nor a network.
 
 ## Install
 

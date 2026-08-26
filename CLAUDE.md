@@ -20,9 +20,21 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
 
 ## Boundaries
 
-- **No ROS packages, no application code.** This repo is configuration and the
-  scripts that deploy it. A node that happens to speak Zenoh belongs in the
-  package repo that owns its behaviour, not here.
+- **No ROS packages, no application code, with one named exception.** This repo
+  is configuration and the scripts that deploy it. A node that happens to speak
+  Zenoh belongs in the package repo that owns its behaviour, not here.
+  `episodes/` is the exception, and it is one on purpose: the episode queryable
+  implements a transport surface, not a behaviour. It answers queries on
+  `fm/episodes/**`, and it exists precisely because MCAP bytes must not be
+  streamed as topics across the fabric — so the queryable and the allowlists
+  that keep those bytes off the wire are one decision, and splitting them across
+  two repos would leave half a wire contract in each. Nothing else earns that
+  exception.
+- **The router lives on Rune, on the host.** Rune is the always-on office Mac
+  mini; on macOS the router is a launchd LaunchDaemon bound to the tailnet
+  interface only. Never the GPU workstation, which is wiped and rebooted. Never
+  inside Rune's CI guest, which is ephemeral and network isolated —
+  `install-router.sh` refuses to install in a VM for that reason.
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.
@@ -87,4 +99,8 @@ FM_MACHINE_FILE=/tmp/machine.json FM_COMMS_ENV_FILE=/tmp/fm-comms.env \
   is what `install.sh --role <role>` dispatches to, so a new role is one new file
 - `zenoh/` — config templates plus `zenoh.version`, the single version pin
 - `systemd/` — the two units and the `fm-comms.env` example they read
+- `launchd/` — the router's macOS LaunchDaemon template
+- `scripts/ci/` — the checks CI runs; not run.sh verbs, so they live one level down
+- `docs/diagrams/` — `transport.d2` and its rendered sidecar; re-render with
+  `./render.sh`, and commit both
 - `deploy/` — the compose overlay, for hosts that run the stack in containers
