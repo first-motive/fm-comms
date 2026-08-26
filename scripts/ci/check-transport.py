@@ -60,11 +60,12 @@ CARDS = {
     "recorder": {"name": "fm-rec-01", "role": "jetson", "workload": "recorder"},
     "processor": {"name": "fm-rec-02", "role": "jetson", "workload": "processor"},
     "robot": {"name": "fm-rec-03", "role": "jetson", "workload": "robot"},
+    "workstation": {"name": "fm-ws-01", "role": "workstation", "workload": "workstation"},
     "cockpit": {"name": "fm-mac-02", "role": "mac", "workload": "cockpit"},
     "router": {"name": "fm-mac-01", "role": "mac", "workload": "router"},
 }
 
-BRIDGE_PROFILES = ("recorder", "processor", "robot", "cockpit")
+BRIDGE_PROFILES = ("recorder", "processor", "robot", "workstation", "cockpit")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
 FM_ROUTER_ENDPOINT=tcp/fixture-router:7447
@@ -195,6 +196,16 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/joint_trajectory_controller/joint_trajectory"),
     ],
     "processor": [],
+    "workstation": [
+        # The workstation runs the sim the same way a rig runs an arm, so the
+        # rule that keeps a remote publisher off the controllers holds here too.
+        ("subscribers", "/arm_controller/joint_trajectory"),
+        ("subscribers", "/joint_trajectory_controller/joint_trajectory"),
+        # Sim cameras render locally and are the largest thing this host could
+        # put on the wire.
+        ("publishers", "/head/color/image_raw"),
+        ("publishers", "/wrist/color/image_raw"),
+    ],
     "cockpit": [
         # The Mac publishes teleop, and teleop is Servo's jog topics — which the
         # rig rate-limits, collision-checks, and degrades to "stop" on a dropped
@@ -209,6 +220,27 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/fm_rec_01/head/aligned_depth_to_color/image_raw"),
         ("subscribers", "/fm_rec_01/wrist/color/image_raw"),
     ],
+}
+
+
+# Topic names a bridge MUST carry, and the profile each belongs to. The mirror
+# of FORBIDDEN_TOPICS, and the check the workstation profile exists because of: a
+# bridge whose allowlist admits nothing holds a session, logs nothing, and looks
+# healthy from both ends while the fleet sees an empty topic graph
+# (fm-comms#20). An allowlist is graded on what it lets through as well as on
+# what it stops.
+REQUIRED_TOPICS = {
+    "recorder": [("publishers", "/rosout")],
+    "processor": [("publishers", "/process/state"), ("subscribers", "/process/start")],
+    "robot": [("publishers", "/joint_states")],
+    # Both halves of the union, which is the whole point of the profile.
+    "workstation": [
+        ("publishers", "/joint_states"),
+        ("publishers", "/tf"),
+        ("publishers", "/process/state"),
+        ("subscribers", "/process/start"),
+    ],
+    "cockpit": [("subscribers", "/fm_ws_01/joint_states")],
 }
 
 
@@ -270,6 +302,10 @@ def check_bridge(profile: str, config: dict) -> None:
             for pattern in allow.get(kind, []):
                 if not pattern.startswith("^/fm_"):
                     fail(where, f"{kind[:-1]} rule is not scoped to a rig prefix: {pattern!r}")
+
+    for kind, topic in REQUIRED_TOPICS.get(profile, []):
+        if not any(matches(pattern, topic) for pattern in allow.get(kind, [])):
+            fail(where, f"carries no {kind[:-1]} rule for {topic!r}")
 
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):

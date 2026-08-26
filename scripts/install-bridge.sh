@@ -7,7 +7,7 @@
 # machine's identity card and typed nowhere: fm-rec-01 becomes fm_rec_01. Which
 # topics cross depends on what work the machine does, which the card's `workload`
 # names: it selects zenoh/bridge-<profile>.json5 (recorder | processor | robot |
-# cockpit).
+# workstation | cockpit).
 #
 # Two service paths, chosen by OS, because the two machines are not alike:
 #

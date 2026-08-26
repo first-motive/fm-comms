@@ -73,6 +73,10 @@ show() {
   # — the whole point of `show` is to prove what this host WOULD render, and an
   # unset variable says nothing about the card the profile now comes from.
   fm_log "  profile       $(fm_comms_bridge_profile 2>/dev/null || echo '<none — this host runs no bridge>')"
+  # The template beside the profile, because the two can disagree: a card naming
+  # a workload this checkout carries no config for is the failure that reads as
+  # "the bridge started and routed nothing".
+  fm_log "  template      $(fm_comms_bridge_template 2>/dev/null || echo '<none>')"
   fm_log "  router        ${FM_ROUTER_ENDPOINT:-<unset>}"
   fm_log "  router port   ${FM_ROUTER_PORT:-<unset>}"
   # The bind addresses only matter on the router itself, and resolving them needs

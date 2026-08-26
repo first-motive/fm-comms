@@ -509,7 +509,8 @@ fm_comms_resolve() {
   export FM_RIG_NAMESPACE FM_EPISODES_DIR FM_ROUTER_PORT FM_ROS_DOMAIN_ID
 }
 
-# Echo the bridge profile this machine runs: recorder | processor | robot | cockpit.
+# Echo the bridge profile this machine runs: recorder | processor | robot |
+# workstation | cockpit.
 #
 # Taken from the card's `workload`, which is the field that answers the question
 # `role` cannot — a recorder rig and a processor rig are both jetsons. That was
@@ -532,7 +533,7 @@ fm_comms_bridge_profile() {
   fi
   if [ -z "$profile" ]; then
     fm_err "no bridge profile for this host"
-    fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|cockpit>"
+    fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|workstation|cockpit>"
     fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
   fi

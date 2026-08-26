@@ -18,7 +18,7 @@ fm-docker stay on `.1` unless they moved):
 | Machine | Role | Workload | What it runs |
 | --- | --- | --- | --- |
 | Rune | office Mac mini | `router` | `zenohd` on the host, under launchd |
-| Workstation | GPU tower | `processor` | the stack, sim, inference |
+| Workstation | GPU tower | `workstation` | the stack, sim, inference, the dataset engine |
 | fm-rec-01 | Jetson | `recorder` | cameras, tracker, episode recording |
 | Mac | laptop | `cockpit` | the cockpit, `fm` CLI, its own bridge |
 
@@ -109,7 +109,7 @@ fm device ssh <machine> -- 'fm machine show --json'
 On the Mac: `fm machine show --json`.
 
 **Pass:** `transport` is `zenoh`, and `workload` is the machine's real job
-(`processor` / `recorder` / `cockpit`).
+(`workstation` / `recorder` / `cockpit`).
 **Fail:** `dds-lan` — this machine was never migrated, and everything below it
 will fail in a way that looks like a network problem.
 
@@ -122,11 +122,14 @@ fm device ssh <machine> -- 'cd $(fm machine show --json | jq -r .workspace)/fm-c
 On the Mac: `cd $(fm machine show --json | jq -r .workspace)/fm-comms && ./run.sh render show`.
 
 **Pass:** `namespace` matches the machine name with underscores (`fm-rec-01` →
-`fm_rec_01`); `profile` matches the workload; `router` is Rune's endpoint — the
-LAN one on a machine sitting in the office, the tailnet one on a machine that
+`fm_rec_01`); `profile` matches the workload and `template` points at the
+matching `zenoh/bridge-<profile>.json5`; `router` is Rune's endpoint — the LAN
+one on a machine sitting in the office, the tailnet one on a machine that
 travels.
 **Fail:** any `<unset>` on the first three lines.
-**Note:** on the Mac `profile` must read `cockpit`. `<none — this host runs no
+**Note:** on the Mac `profile` must read `cockpit`, and on the workstation it
+must read `workstation` — `processor` there is the shape that held a session and
+carried no joint states (fm-comms#20). `<none — this host runs no
 bridge>` means the card was never given a workload; fix it with
 `fm machine init --workload cockpit` and re-run the installer.
 

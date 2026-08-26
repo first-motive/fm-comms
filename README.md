@@ -113,11 +113,17 @@ cannot — a recorder rig and a processor rig are both jetsons. It picks the top
 set:
 
 ```
-recorder    head + wrist cameras, hand tracking, capture session, LiDAR
-processor   the dataset engine's run state and commands
-robot       joint states and TF out, Servo jog commands in
-cockpit     the Mac: the fleet's published set in, teleop commands out
+recorder     head + wrist cameras, hand tracking, capture session, LiDAR
+processor    the dataset engine's run state and commands
+robot        joint states and TF out, Servo jog commands in
+workstation  the GPU tower: robot and processor at once, since it runs both
+cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
+
+`workstation` is the union of `robot` and `processor`, and exists because the
+tower is genuinely both machines: the sim publishes the joint states the cockpit
+renders while the dataset engine runs beside it. Under `processor` alone its
+bridge held a session and carried no state (fm-comms#20).
 
 `cockpit` is the mirror of the others, and reads backwards on purpose. A rig
 publishes what it produces and accepts a few commands; the Mac subscribes to what
