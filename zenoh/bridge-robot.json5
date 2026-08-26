@@ -35,43 +35,46 @@
       nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
       domain: ${FM_ROS_DOMAIN_ID},
 
+      /// Allowlist, and ONLY an allowlist. zenoh-plugin-ros2dds flattens allow
+      /// and deny into a single untagged choice, so a config carrying both is
+      /// refused at startup as "unknown field `deny`" — which reads as a typo
+      /// and is not one.
+      ///
+      /// So the rule that matters most on this rig is enforced by absence: no
+      /// inbound pattern below matches `<controller>/joint_trajectory`. The arm
+      /// controllers take that topic directly, bypassing Servo's limits and
+      /// collision checking, and a remote publisher on a lossy link must never
+      /// reach them. Every pattern is anchored so none can widen into it by
+      /// accident, and scripts/ci/check-transport.py compiles these patterns and
+      /// tests them against a real trajectory topic name on every pull request.
       allow: {
         publishers: [
           /// State the cockpit renders: where the arm is, what it looks like.
-          "/joint_states",
-          "/robot_description",
-          "/tf",
-          "/tf_static",
-          "/rosout",
+          "^/joint_states$",
+          "^/robot_description$",
+          "^/tf$",
+          "^/tf_static$",
+          "^/rosout$",
           /// Servo's own status, so the operator sees why a jog was refused.
-          "/servo_node.*/status",
+          "^/servo_node.*/status$",
         ],
         subscribers: [
           /// Jog commands. Servo applies its own limits and collision checks on
           /// the rig, so a dropped or delayed sample degrades to "stop", not to
           /// an unbounded motion.
-          "/servo_node.*/delta_twist_cmds",
-          "/servo_node.*/delta_joint_cmds",
-          "/target_pose",
+          "^/servo_node.*/delta_twist_cmds$",
+          "^/servo_node.*/delta_joint_cmds$",
+          "^/target_pose$",
           /// Gripper open/close presets.
-          "/gripper_teleop/.*/preset",
+          "^/gripper_teleop/.*/preset$",
           /// Base velocity, on the robots that have a base.
-          "/cmd_vel",
+          "^/cmd_vel$",
         ],
         service_servers: [
           /// Switching controllers is how teleop is armed and disarmed.
-          "/controller_manager/.*",
-          "/robot_state_publisher/.*",
-          "/servo_node.*/.*",
-        ],
-      },
-
-      deny: {
-        subscribers: [
-          /// Never accept a raw trajectory from off-rig. The arm controllers take
-          /// joint_trajectory directly, bypassing Servo's limits and collision
-          /// checking — a remote publisher on a lossy link must not reach them.
-          ".*_controller/joint_trajectory$",
+          "^/controller_manager/.*$",
+          "^/robot_state_publisher/.*$",
+          "^/servo_node.*/.*$",
         ],
       },
 

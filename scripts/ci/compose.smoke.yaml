@@ -1,0 +1,33 @@
+# compose.smoke.yaml — a router and a bridge, on their own network, for CI.
+#
+# NOT deploy/compose.zenoh.yaml. That file is how a real host runs the transport:
+# host networking, so the router advertises an address its peers can reach, and
+# the configs come from /etc/fm-comms. This one exists to answer one question a
+# runner can answer — does a bridge actually establish a session with a router at
+# the pinned version — so it uses a private network and configs rendered into a
+# scratch directory.
+#
+# Driven by scripts/ci/smoke-transport.sh, which renders the configs, brings this
+# up, and asserts the session exists. Both images take the version from
+# FM_ZENOH_VERSION, the same pin every other install path reads.
+
+services:
+  zenoh-router:
+    image: eclipse/zenoh:${FM_ZENOH_VERSION:?set FM_ZENOH_VERSION from comms/zenoh/zenoh.version}
+    container_name: fm-smoke-router
+    # The REST plugin is what makes this a state assertion rather than a timeout.
+    # It serves the router's admin space, so the smoke can ask the router which
+    # sessions it actually holds instead of watching a log and hoping.
+    command: ["--config", "/etc/fm-comms/router.json5", "--rest-http-port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${FM_SMOKE_CONF:?set FM_SMOKE_CONF to the rendered config dir}:/etc/fm-comms:ro
+
+  zenoh-bridge:
+    image: eclipse/zenoh-bridge-ros2dds:${FM_ZENOH_VERSION:?set FM_ZENOH_VERSION from comms/zenoh/zenoh.version}
+    container_name: fm-smoke-bridge
+    command: ["--config", "/etc/fm-comms/bridge.json5"]
+    depends_on: [zenoh-router]
+    volumes:
+      - ${FM_SMOKE_CONF:?set FM_SMOKE_CONF to the rendered config dir}:/etc/fm-comms:ro

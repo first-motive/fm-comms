@@ -40,13 +40,13 @@
         publishers: [
           /// Run state, the job index, and per-job detail — what the Process
           /// surface renders.
-          "/process/.*",
-          "/rosout",
+          "^/process/.*$",
+          "^/rosout$",
         ],
         subscribers: [
           /// Commands into the processor: start a run, annotate, provision the
           /// real model, delete a job.
-          "/process/.*",
+          "^/process/.*$",
         ],
       },
 
