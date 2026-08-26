@@ -12,7 +12,7 @@ the fleet, not of the machine you happened to retest.
 
 ## Before You Start
 
-Four machines, all converged on the `v*-zenoh.2` pre-release tags (fm-ros2 and
+Four machines, all converged on the `v*-zenoh.3` pre-release tags (fm-ros2 and
 fm-docker stay on `.1` unless they moved):
 
 | Machine | Role | Workload | What it runs |
