@@ -165,7 +165,9 @@ fm device ssh fm-rec-01 -- 'ros2 topic hz /fm_ws_01/joint_states'
 ### 3.5 The sim-first loop runs on zenoh, on one host
 
 The open question this gate exists to answer. In CI the loop job is pinned to
-`dds-lan`: on the default it fails there with the stack up, `/joint_states`
+`none` — the profile that changes nothing, leaving the container image's own
+middleware alone, which is what that job had before the verbs sourced a transport
+at all. On the default it fails there with the stack up, `/joint_states`
 advertised, and no sample reaching the first `ros2 topic echo --once` inside 20
 seconds. Cyclone's participant ceiling on loopback was one cause and is fixed;
 whatever remains is not understood, and a container with no bridge and no router
@@ -184,7 +186,7 @@ written, and at least one episode in it is usable.
 up and attach it to the pull request; the QoS on both ends is the first thing to
 read. Do not merge — with this red, a workstation on zenoh cannot record.
 
-Once green, drop the `FM_TRANSPORT=dds-lan` pin on the loop job in
+Once green, drop the `FM_TRANSPORT=none` pin on the loop job in
 `.github/workflows/ci.yml`.
 
 ---
@@ -337,8 +339,8 @@ still on the wrong machine.
 Only when every line above is green:
 
 1. Delete the FastDDS LAN profile (`scripts/env/dds-lan.sh`), keeping
-   `FM_TRANSPORT=dds-lan` documented as unsupported. Drop the pin it still holds
-   on the loop CI job (section 3.5).
+   `FM_TRANSPORT=dds-lan` documented as unsupported. Drop the `FM_TRANSPORT=none`
+   pin the loop CI job still holds (section 3.5).
 2. Take the pull requests out of draft.
 3. Merge in order: `.github` → `fm-comms` → `fm-docker` → `fm-ros2` →
    `.github-private`.
