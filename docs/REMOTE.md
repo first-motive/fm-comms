@@ -9,17 +9,23 @@ never reaches a rig directly — the router is the only host they can open a soc
 to, and the bridges decide what crosses it.
 
 ```
-contractor  ──tailnet──▶  workstation:7447 (zenohd)  ◀──tailnet──  rig bridges
-   client mode                  the only                 client mode
-                            reachable host
+contractor  ──tailnet──▶  Rune:7447 (zenohd)  ◀──tailnet──  rig bridges
+   client mode                the only              client mode
+                          reachable host
 ```
+
+The router is on Rune, the always-on office Mac mini — on that machine's host
+under launchd, never on the GPU workstation and never inside Rune's CI guest. It
+binds two sockets, its LAN address and its tailnet address; a contractor only ever
+uses the tailnet one.
 
 ## Before You Start
 
 You need, on the office side:
 
 - Tailscale admin on the tailnet, to invite a user and edit the ACL.
-- The router already running: `systemctl status fm-zenohd` on the workstation.
+- The router already running:
+  `launchctl print system/ai.firstmotive.zenohd` on Rune.
 - The rigs already bridged: `systemctl status fm-zenoh-bridge` on each.
 
 And from the contractor:
@@ -42,8 +48,8 @@ the ACL — an access problem is much easier to read when only one thing is new.
 
 ## 2. Grant The Router Port, And Only That
 
-The router carries a tag so the grant names a role rather than a machine. On the
-workstation, once:
+The router carries a tag so the grant names a role rather than a machine. On
+Rune, once:
 
 ```bash
 sudo tailscale up --advertise-tags=tag:fm-router
@@ -95,8 +101,8 @@ and everything else must fail:
 
 ```bash
 tailscale status | grep fm-router          # the router is visible
-nc -vz <workstation>.<tailnet>.ts.net 7447 # succeeds
-nc -vz <workstation>.<tailnet>.ts.net 22   # must be refused
+nc -vz <rune>.<tailnet>.ts.net 7447        # succeeds
+nc -vz <rune>.<tailnet>.ts.net 22          # must be refused
 nc -vz <rig>.<tailnet>.ts.net 7447         # must be refused
 ```
 
@@ -116,12 +122,13 @@ cd fm-comms
 They need one value from you — the router endpoint:
 
 ```
-tcp/<workstation>.<tailnet>.ts.net:7447
+tcp/<rune>.<tailnet>.ts.net:7447
 ```
 
-Use the **tailnet** name, never the office LAN address. The LAN address is
-unroutable for them, and it stops working for everyone the moment the workstation
-moves.
+Use the **tailnet** name, never Rune's LAN address. The router binds both, and
+the LAN one is what a rig in the office uses — it is unroutable from outside, and
+it changes whenever Rune's network does. The tailnet name is stable and is the
+only address the ACL above grants.
 
 The desktop app takes the same endpoint as a `zenoh://` rig URL in Settings.
 
@@ -134,17 +141,17 @@ subscribe to:
 
 ```bash
 # Joint states from fm-rec-01 — should tick steadily.
-z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'fm_rec_01/joint_states'
+z_sub -e tcp/<rune>.<tailnet>.ts.net:7447 -k 'fm_rec_01/joint_states'
 
 # What that rig is publishing at all. Nothing back means the bridge is down, or
 # the topic is not on the rig's allowlist.
-z_sub -e tcp/<workstation>.<tailnet>.ts.net:7447 -k 'fm_rec_01/**'
+z_sub -e tcp/<rune>.<tailnet>.ts.net:7447 -k 'fm_rec_01/**'
 ```
 
 Episodes from the processor:
 
 ```bash
-E=tcp/<workstation>.<tailnet>.ts.net:7447
+E=tcp/<rune>.<tailnet>.ts.net:7447
 
 # The index: every recorded episode, newest first.
 z_get -e "$E" -s 'fm/episodes/index'
@@ -165,8 +172,9 @@ Worth stating plainly, because the tailnet makes it feel like a flat network:
   `zenoh/bridge-<profile>.json5` is an allowlist; a topic absent from it never
   leaves the rig, whatever a caller subscribes to.
 - **Command a robot arm by accident.** The robot bridge accepts Servo jog
-  commands, which apply the rig's own limits and collision checks, and it denies
-  raw `joint_trajectory` outright.
+  commands, which apply the rig's own limits and collision checks. Raw
+  `joint_trajectory` never appears in its inbound allowlist, and an allowlist is
+  all the plugin accepts — there is no deny block to get wrong.
 - **Fetch an oversized episode.** A query is one request and one reply, so an
   MCAP over `FM_EPISODES_MAX_BYTES` is refused with its size rather than stalling
   the router for everyone. Ship those by rsync.
@@ -181,7 +189,7 @@ outside the tailnet needs in.
 
 | Symptom | Where to look |
 | --- | --- |
-| `nc` to 7447 refused | The ACL grant, then `systemctl status fm-zenohd` |
+| `nc` to 7447 refused | The ACL grant, then `launchctl print system/ai.firstmotive.zenohd` on Rune |
 | Connects, no samples | `journalctl -u fm-zenoh-bridge -f` on the rig |
 | Some topics, not others | That rig's `allow` list in `zenoh/bridge-<profile>.json5` |
 | Samples arrive slowly | `pub_max_frequencies` in the same file — rates are capped on purpose |
