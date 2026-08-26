@@ -16,10 +16,16 @@ DDS multicast.
 DDS no longer crosses a network at all. Each host keeps a loopback-only DDS
 graph, and its bridge republishes only the topics its profile allows. The router
 runs on Rune, the always-on office Mac mini — on that machine's host under
-launchd, bound to the tailnet interface, and never inside its CI guest. It is
-not on the GPU workstation, because that machine is wiped, rebooted, and loaded
-with sim and inference, and every reboot would take the fleet's discovery point
-with it.
+launchd, and never inside its CI guest. It is not on the GPU workstation, because
+that machine is wiped, rebooted, and loaded with sim and inference, and every
+reboot would take the fleet's discovery point with it.
+
+The router binds two sockets and no more: Rune's LAN address and its tailnet
+address. In the office a rig connects over the switch it is already plugged into;
+off-site, or on a Wi-Fi link that filters multicast, the same rig connects through
+the tailnet. A machine that moves changes its endpoint, not its transport. A
+wildcard bind is refused, because it would offer the fleet's whole topic graph to
+every network the box touches — Rune's CI guest network included.
 
 This repo carries **no ROS packages and no application code**, with one named
 exception. It is otherwise configs, systemd units, a launchd job, a compose
@@ -51,15 +57,20 @@ completed list goes in the pull request.
 Pick the role this host plays:
 
 ```bash
-./install.sh --role router      # the office workstation: run zenohd
-./install.sh --role bridge      # a rig: run zenoh-bridge-ros2dds
+./install.sh --role router      # Rune: run zenohd under launchd
+./install.sh --role bridge      # a rig or a Mac: run zenoh-bridge-ros2dds
 ./install.sh --role client      # a laptop: the CLI tools only
 ```
+
+`--role bridge` dispatches by OS. On Linux it places a systemd unit, up at boot;
+on macOS it places a user LaunchAgent, up while someone is logged in. The Mac
+needs a bridge for the same reason a rig does — under this profile its DDS graph
+is loopback-only, so without one its ROS tools see nothing the fleet publishes.
 
 Inspect before running, or see what a run would do:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.1/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.2/install.sh -o install.sh
 less install.sh && bash install.sh --role router --dry-run
 ```
 
@@ -93,21 +104,29 @@ never committed.
 | recordings directory | card `workspace`, plus `/recordings` |
 | whether this host runs Zenoh at all | card `transport` |
 | where a `curl \| bash` install puts its checkout | card `workspace` |
+| bridge profile | card `workload` |
 | router endpoint, router port, ROS domain | `/etc/fm-comms.env` — fleet-wide |
-| bridge profile | `/etc/fm-comms.env` — see below |
+| the router's two bind addresses | the host itself, at render time |
 
-A rig picks its topic set with `FM_BRIDGE_PROFILE`:
+The profile is the card's `workload`, which is the field that answers what `role`
+cannot — a recorder rig and a processor rig are both jetsons. It picks the topic
+set:
 
 ```
 recorder    head + wrist cameras, hand tracking, capture session, LiDAR
 processor   the dataset engine's run state and commands
 robot       joint states and TF out, Servo jog commands in
+cockpit     the Mac: the fleet's published set in, teleop commands out
 ```
 
-That one is still typed, because the card says what kind of machine this is
-(`workstation`, `jetson`, `mac`) and not what work it does — a recorder rig and a
-processor rig are both jetsons. A `workload` field on the card would let it join
-the others; until then it lives in the env file.
+`cockpit` is the mirror of the others, and reads backwards on purpose. A rig
+publishes what it produces and accepts a few commands; the Mac subscribes to what
+the fleet publishes and publishes only teleop. It also carries no namespace: the
+rigs already prefix their keys, and the Mac's job is to see them as
+`/fm_rec_01/...` exactly as they were sent.
+
+Set it with `fm machine init --workload cockpit`. `FM_BRIDGE_PROFILE` in the env
+file still overrides it for a bench run.
 
 ### Check a render before installing it
 
@@ -118,6 +137,8 @@ them exactly as an install would and prints the result instead of writing it:
 ./run.sh render show              # this host's facts, and where each came from
 ./run.sh render bridge            # what /etc/fm-comms/bridge.json5 would be
 ./run.sh render router
+./run.sh render launchd           # the router's LaunchDaemon plist
+./run.sh render launchagent       # the Mac bridge's LaunchAgent plist
 ./run.sh render episodes
 ```
 

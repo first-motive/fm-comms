@@ -12,14 +12,19 @@ the fleet, not of the machine you happened to retest.
 
 ## Before You Start
 
-Four machines, all converged on the `v*-zenoh.1` pre-release tags:
+Four machines, all converged on the `v*-zenoh.2` pre-release tags (fm-ros2 and
+fm-docker stay on `.1` unless they moved):
 
 | Machine | Role | Workload | What it runs |
 | --- | --- | --- | --- |
 | Rune | office Mac mini | `router` | `zenohd` on the host, under launchd |
 | Workstation | GPU tower | `processor` | the stack, sim, inference |
 | fm-rec-01 | Jetson | `recorder` | cameras, tracker, episode recording |
-| Mac | laptop | — | the cockpit, `fm` CLI |
+| Mac | laptop | `cockpit` | the cockpit, `fm` CLI, its own bridge |
+
+The Mac is a bridge host now, not a client. Under this profile its DDS graph is
+loopback-only, so without a bridge its ROS tools see nothing the fleet publishes
+and sections 3 and 5 cannot run at all.
 
 Record the exact versions once, at the top of the pull request, so a rerun can be
 compared against this one:
@@ -53,18 +58,23 @@ ssh rune '/usr/sbin/sysctl -n kern.hv_vmm_present; /usr/bin/id -un'
 **Fail:** `1` means you are inside a guest. Stop — the router is in the wrong
 place, and no later line in this gate means anything.
 
-### 1.3 It listens on the tailnet interface and nowhere else
+### 1.3 It has exactly two listeners, LAN and tailnet
 
 ```bash
 ssh rune 'lsof -nP -iTCP:7447 -sTCP:LISTEN'
 ssh rune 'tailscale ip -4'
+ssh rune 'ipconfig getifaddr $(route -n get default | awk "/interface:/ {print \$2}")'
 ```
 
-**Pass:** exactly one listening socket, and its address is the tailnet address
-the second command printed.
+**Pass:** exactly two listening sockets. One address is what the second command
+printed (the tailnet); the other is what the third printed (the LAN). Rune
+carries three LAN addresses, so check the address, not just the count.
 **Fail:** `*:7447`, `0.0.0.0:7447`, or `[::]:7447` — a wildcard bind. The whole
-fleet's topic graph is being offered to the office LAN and to Rune's guest
-network.
+fleet's topic graph is being offered to every network Rune touches, its CI guest
+network included.
+**Fail:** one socket. Tailnet-only sends the Jetson's compressed camera streams
+through WireGuard on its own CPU while it sits one switch port away; LAN-only
+leaves an off-site rig with nowhere to connect.
 
 ### 1.4 It survives a reboot unattended
 
@@ -81,7 +91,14 @@ LaunchDaemon and not a LaunchAgent.
 
 ## 2. The Bridges
 
-Run 2.1–2.3 on the workstation and on fm-rec-01, one at a time.
+Run 2.1–2.3 on the workstation, on fm-rec-01, **and on the Mac**, one at a
+time. Three bridges, not two: the Mac runs the `cockpit` profile, and that is what
+makes the topic lines in section 3 and the deny lines in section 5 meaningful.
+
+On the Mac the commands are local — there is no `fm device ssh` to yourself — and
+the service manager is launchd, not systemd. Where a line below says
+`fm device ssh <machine> -- '<cmd>'`, run `<cmd>` in a shell on the Mac instead,
+and substitute the macOS form given under each line.
 
 ### 2.1 The card and the bridge agree
 
@@ -89,8 +106,10 @@ Run 2.1–2.3 on the workstation and on fm-rec-01, one at a time.
 fm device ssh <machine> -- 'fm machine show --json'
 ```
 
-**Pass:** `transport` is `zenoh`, and `workload` is the rig's real job
-(`processor` / `recorder`).
+On the Mac: `fm machine show --json`.
+
+**Pass:** `transport` is `zenoh`, and `workload` is the machine's real job
+(`processor` / `recorder` / `cockpit`).
 **Fail:** `dds-lan` — this machine was never migrated, and everything below it
 will fail in a way that looks like a network problem.
 
@@ -100,10 +119,16 @@ will fail in a way that looks like a network problem.
 fm device ssh <machine> -- 'cd $(fm machine show --json | jq -r .workspace)/fm-comms && ./run.sh render show'
 ```
 
+On the Mac: `cd $(fm machine show --json | jq -r .workspace)/fm-comms && ./run.sh render show`.
+
 **Pass:** `namespace` matches the machine name with underscores (`fm-rec-01` →
-`fm_rec_01`); `profile` matches the workload; `router` is Rune's tailnet
-endpoint.
+`fm_rec_01`); `profile` matches the workload; `router` is Rune's endpoint — the
+LAN one on a machine sitting in the office, the tailnet one on a machine that
+travels.
 **Fail:** any `<unset>` on the first three lines.
+**Note:** on the Mac `profile` must read `cockpit`. `<none — this host runs no
+bridge>` means the card was never given a workload; fix it with
+`fm machine init --workload cockpit` and re-run the installer.
 
 ### 2.3 The bridge holds a session with the router
 
@@ -112,11 +137,18 @@ fm device ssh <machine> -- 'systemctl is-active fm-zenoh-bridge'
 ssh rune 'curl -s http://127.0.0.1:8000/@/local/router | jq ".[0].value.sessions | length"'
 ```
 
-**Pass:** `active`, and the session count on Rune rises by one per bridge. With
-both rigs and the Mac connected it should read **3**.
-**Fail:** `active` with a session count of 0 is the important case — the bridge
-started and never connected. Read
-`journalctl -u fm-zenoh-bridge -n 50` on the rig.
+On the Mac:
+
+```bash
+launchctl print "gui/$(id -u)/ai.firstmotive.zenoh-bridge" | grep -E 'state|pid'
+```
+
+**Pass:** `active` on the rigs, `state = running` with a pid on the Mac, and the
+session count on Rune rises by one per bridge. With both rigs and the Mac
+connected it should read **3**.
+**Fail:** running with a session count of 0 is the important case — the bridge
+started and never connected. Read `journalctl -u fm-zenoh-bridge -n 50` on a rig,
+or `tail -50 ~/Library/Logs/fm-comms/zenoh-bridge.err.log` on the Mac.
 
 > The router's REST admin space is not on by default. For the gate, start
 > `zenohd` with `--rest-http-port 8000` bound to loopback, and take the flag off
@@ -175,16 +207,29 @@ in it is the wrong place to chase it.
 
 The workstation runs the same stack for real, so it is answered here.
 
+The loop runs on the workstation's HOST, in the fm_ros2 checkout; it drives the
+sim container itself. That container is the `fm` service of the **`fm-sim`**
+compose project — `docker compose -p fm-sim -f docker/compose.yaml -f
+docker/compose.linux.yaml` — which is a different project from the processor's
+`fm-processor`, so the two never share a container.
+
 ```bash
 fm device ssh fm-ws-01 -- 'cd $(fm machine show --json | jq -r .workspace)/fm_ros2 && ./scripts/ci/loop.sh'
 ```
 
 **Pass:** the loop completes — an episode reaches the index, a manifest is
 written, and at least one episode in it is usable.
-**Fail:** `no /joint_states message within 20s`. Capture
-`ros2 topic info /joint_states --verbose` from a second shell while the stack is
-up and attach it to the pull request; the QoS on both ends is the first thing to
-read. Do not merge — with this red, a workstation on zenoh cannot record.
+**Fail:** `no /joint_states message within 20s`. Capture the QoS on both ends
+from a second shell while the stack is up — that is the first thing to read —
+and attach it to the pull request:
+
+```bash
+fm device ssh fm-ws-01 -- 'cd $(fm machine show --json | jq -r .workspace)/fm_ros2 && \
+  docker compose -p fm-sim -f docker/compose.yaml -f docker/compose.linux.yaml \
+  exec -T fm /ros_entrypoint.sh ros2 topic info /joint_states --verbose'
+```
+
+Do not merge — with this red, a workstation on zenoh cannot record.
 
 Once green, drop the `FM_TRANSPORT=none` pin on the loop job in
 `.github/workflows/ci.yml`.
@@ -253,6 +298,11 @@ fm device ssh fm-rec-01 -- 'timeout 10 ros2 topic echo --once /arm_controller/jo
 **Fail:** a message arrives. Stop the gate — an off-rig publisher can reach the
 arm controllers directly, bypassing Servo's limits and collision checking. This
 is the most serious failure on the list.
+
+Two allowlists have to fail for a message to arrive: the Mac's own `cockpit`
+bridge refuses to route the topic outbound, and `bridge-robot` refuses it
+inbound. Both are checked by `check-transport.py` on every pull request; this
+line proves it on the wire.
 
 ### 5.2 Raw frames do not cross from the recorder
 

@@ -5,7 +5,8 @@
 # zenoh-bridge-ros2dds republishes only the topics its profile allows onto the
 # single zenohd router. The router is the fleet's meeting point, and it lives on
 # Rune — always on, wired, tailnet-attached — never on the workstation that is
-# wiped and rebooted, and never inside Rune's own CI guest.
+# wiped and rebooted, and never inside Rune's own CI guest. It binds two sockets:
+# Rune's LAN address for the office, and its tailnet address for everywhere else.
 ...@styles
 
 direction: down
@@ -28,7 +29,7 @@ rune: Rune — office Mac mini {
     class: block
     r: Host (launchd) { class: role }
     p: fm-comms { class: pkg }
-    a: zenohd { class: art }
+    a: "zenohd — LAN + tailnet" { class: art }
   }
 
   guest: CI guest {
@@ -66,24 +67,24 @@ rec: Recorder — fm-rec-01 {
   dds: "DDS on loopback\ncameras · tracker · capture" { class: topic }
 }
 
-mac: Mac — client {
+mac: Mac — cockpit {
   style.stroke: "#3B3443"
   style.fill: transparent
 
   bridge: "" {
     grid-rows: 3
     class: block
-    r: Client { class: role }
-    p: fm-comms { class: pkg }
-    a: zenoh client { class: art }
+    r: Cockpit (LaunchAgent) { class: role }
+    p: bridge-cockpit { class: pkg }
+    a: zenoh-bridge-ros2dds { class: art }
   }
-  dds: "DDS on loopback\ncockpit · teleop" { class: topic }
+  dds: "DDS on loopback\nfleet topics in · teleop out" { class: topic }
 }
 
 ws.dds -> ws.bridge: allowed topics only
 rec.dds -> rec.bridge: allowed topics only
 mac.dds -> mac.bridge: allowed topics only
 
-ws.bridge -> rune.host: tcp/rune:7447 over the tailnet
-rec.bridge -> rune.host: tcp/rune:7447 over the tailnet
-mac.bridge -> rune.host: tcp/rune:7447 over the tailnet
+ws.bridge -> rune.host: tcp/rune:7447 — LAN in the office
+rec.bridge -> rune.host: tcp/rune:7447 — LAN in the office
+mac.bridge -> rune.host: tcp/rune:7447 — tailnet off-site

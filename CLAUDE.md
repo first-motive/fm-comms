@@ -31,10 +31,19 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
   two repos would leave half a wire contract in each. Nothing else earns that
   exception.
 - **The router lives on Rune, on the host.** Rune is the always-on office Mac
-  mini; on macOS the router is a launchd LaunchDaemon bound to the tailnet
-  interface only. Never the GPU workstation, which is wiped and rebooted. Never
+  mini; on macOS the router is a launchd LaunchDaemon. Never the GPU
+  workstation, which is wiped and rebooted. Never
   inside Rune's CI guest, which is ephemeral and network isolated —
   `install-router.sh` refuses to install in a VM for that reason.
+- **The router binds exactly two sockets: the LAN and the tailnet.** Neither
+  address is written down — both are read off the host at render time, the LAN
+  one by interface (`FM_ROUTER_LAN_IF`, else the default route) because Rune has
+  three. A wildcard bind is refused everywhere it could appear: the installer's
+  own check, and `check-transport.py` on every pull request.
+- **A bridge is per-OS, not per-rig.** `install.sh --role bridge` places a
+  systemd unit on Linux and a user LaunchAgent on macOS. The Mac's profile is
+  `cockpit` and it is the mirror of a rig's: the fleet's published set in, teleop
+  commands out, and no namespace, because the rigs already prefixed their keys.
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.
@@ -99,7 +108,8 @@ FM_MACHINE_FILE=/tmp/machine.json FM_COMMS_ENV_FILE=/tmp/fm-comms.env \
   is what `install.sh --role <role>` dispatches to, so a new role is one new file
 - `zenoh/` — config templates plus `zenoh.version`, the single version pin
 - `systemd/` — the two units and the `fm-comms.env` example they read
-- `launchd/` — the router's macOS LaunchDaemon template
+- `launchd/` — the macOS job templates: the router's LaunchDaemon, the cockpit
+  bridge's user LaunchAgent
 - `scripts/ci/` — the checks CI runs; not run.sh verbs, so they live one level down
 - `docs/diagrams/` — `transport.d2` and its rendered sidecar; re-render with
   `./render.sh`, and commit both
