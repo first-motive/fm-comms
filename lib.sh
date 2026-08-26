@@ -291,7 +291,7 @@ fm_zenohd_bin() {
     printf '%s\n' "$found"; return 0
   }
   local prefix
-  for prefix in /opt/homebrew /usr/local; do
+  for prefix in "$HOME/.local" /opt/homebrew /usr/local; do
     [ -x "$prefix/bin/zenohd" ] && { printf '%s\n' "$prefix/bin/zenohd"; return 0; }
   done
   fm_err "zenohd is not on this host — install it first (./install.sh --role router)"
