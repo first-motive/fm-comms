@@ -37,6 +37,15 @@ imports no Zenoh at all — `store.py`, `query.py`, and `machine.py` are pure, a
 `service.py` is the only module that opens a session — which is why its test
 suite needs neither a router nor a network.
 
+## The Hardware Gate
+
+The zenoh-only transport does not replace the FastDDS LAN profile because it
+renders and passes CI. It replaces it when four real machines exchange topics and
+episodes over it, and when the rules that keep a trajectory off an arm are shown
+to hold. That checklist is [`docs/HARDWARE-GATE.md`](docs/HARDWARE-GATE.md):
+every line has a command and a pass criterion, every line must be green, and the
+completed list goes in the pull request.
+
 ## Install
 
 Pick the role this host plays:
