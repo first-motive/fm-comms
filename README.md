@@ -59,7 +59,7 @@ Pick the role this host plays:
 Inspect before running, or see what a run would do:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.1.0/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.1/install.sh -o install.sh
 less install.sh && bash install.sh --role router --dry-run
 ```
 

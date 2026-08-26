@@ -17,7 +17,7 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-comms}"
-FM_TAG="${FM_TAG:-v0.1.0}"
+FM_TAG="${FM_TAG:-v0.2.0-zenoh.1}"
 FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
 
 FM_SELFTEST="${FM_SELFTEST:-0}"
