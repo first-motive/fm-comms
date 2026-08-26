@@ -366,6 +366,66 @@ EOF
   printf '[%s]\n' "$out"
 }
 
+# fm_tcp_listening ADDR PORT — return success when something accepts a TCP
+# connection at that address.
+#
+# The question an installer actually has is "can a bridge connect to this?", and
+# a connection is the only thing that answers it. Enumerating sockets answers a
+# narrower one, and on macOS it answers it wrong for anyone but the socket's
+# owner (see fm_tcp_listeners).
+#
+# -w is the connect timeout on both the BSD nc macOS ships and the GNU one on a
+# rig, so the probe cannot hang an install on a half-open address.
+fm_tcp_listening() {
+  local addr="$1" port="$2"
+  if fm_has_cmd nc; then
+    nc -z -w 2 "$addr" "$port" >/dev/null 2>&1
+    return
+  fi
+  # No nc on this host: bash speaks TCP itself, under a timeout. Unbounded, this
+  # hangs until the kernel gives up on a filtered address — an installer that
+  # stops for minutes with nothing on screen, which is worse than the wrong
+  # answer it replaced.
+  local timeout_cmd=""
+  for timeout_cmd in timeout gtimeout ""; do
+    [ -n "$timeout_cmd" ] || break
+    fm_has_cmd "$timeout_cmd" && break
+  done
+  if [ -n "$timeout_cmd" ]; then
+    # The address and port reach the inner shell as its own positional
+    # parameters, so they must not expand here.
+    # shellcheck disable=SC2016
+    "$timeout_cmd" 2 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$addr" "$port" >/dev/null 2>&1
+    return
+  fi
+  fm_err "no way to test a TCP connection on this host: install netcat (nc) or coreutils (timeout)"
+  return 1
+}
+
+# fm_tcp_listeners PORT — echo the listening sockets on PORT, from a vantage
+# point that can see every user's.
+#
+# Privileged on purpose. macOS shows an unprivileged `lsof -i` only the sockets
+# of the caller's own processes, and the router runs under a LaunchDaemon whose
+# account is not the one running the installer — so the plain command printed
+# nothing while zenohd was up on both addresses, and the installer called that
+# "nothing is listening" (fm-comms#20). Escalation is attempted non-interactively
+# first so a probe in a script cannot sit on a password prompt.
+#
+# Echoes nothing and still succeeds when it cannot look: the caller decides what
+# an unreadable socket table means, and for the installer that is a skipped
+# wildcard check rather than a failed install.
+fm_tcp_listeners() {
+  local port="$1" out
+  out="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  if [ "$(id -u)" != 0 ] && fm_has_cmd sudo; then
+    out="$(sudo -n lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+  return 0
+}
+
 # --- The router on macOS -----------------------------------------------------
 
 # The launchd job's reverse-DNS label, which is also its plist's basename. Named

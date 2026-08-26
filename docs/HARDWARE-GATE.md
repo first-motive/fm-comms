@@ -61,14 +61,23 @@ place, and no later line in this gate means anything.
 ### 1.3 It has exactly two listeners, LAN and tailnet
 
 ```bash
-ssh rune 'lsof -nP -iTCP:7447 -sTCP:LISTEN'
 ssh rune 'tailscale ip -4'
 ssh rune 'ipconfig getifaddr $(route -n get default | awk "/interface:/ {print \$2}")'
+nc -z -w 2 <tailnet-address> 7447 && echo tailnet ok
+nc -z -w 2 <lan-address> 7447 && echo lan ok
+ssh rune 'sudo lsof -nP -iTCP:7447 -sTCP:LISTEN'
 ```
 
-**Pass:** exactly two listening sockets. One address is what the second command
-printed (the tailnet); the other is what the third printed (the LAN). Rune
-carries three LAN addresses, so check the address, not just the count.
+`sudo`, and not by habit: the router runs under a LaunchDaemon owned by another
+account, and an unprivileged `lsof -i` on macOS lists only the caller's own
+sockets — it prints nothing while zenohd is up on both addresses (fm-comms#20).
+The two `nc` lines are the check that matters and the one a bridge actually
+makes; run them from your own machine, on the tailnet and on the office LAN.
+
+**Pass:** both `nc` lines print `ok`, and `lsof` shows exactly two listening
+sockets: the address the first command printed (the tailnet) and the address the
+second printed (the LAN). Rune carries three LAN addresses, so check the address,
+not just the count.
 **Fail:** `*:7447`, `0.0.0.0:7447`, or `[::]:7447` — a wildcard bind. The whole
 fleet's topic graph is being offered to every network Rune touches, its CI guest
 network included.

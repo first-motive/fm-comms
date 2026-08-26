@@ -124,55 +124,72 @@ install_daemon_macos() {
 # from before the LAN endpoint was added, a tailnet that was not up when zenohd
 # started, a wildcard someone put in FM_ROUTER_LISTEN by hand. Each of those is a
 # fleet-wide fault that reads as a network problem days later, and each is
-# visible here in one line of lsof.
+# visible here in a couple of connections.
 #
-# Two listeners, and exactly two. A wildcard is refused outright — it would offer
-# the fleet's whole topic graph to anything that can reach the box, this
-# machine's own CI guest network included.
+# The check CONNECTS to each endpoint rather than looking for the port in a
+# socket table. That is what a bridge does, and it is the only form of the
+# question that survives macOS: `lsof -i` run by anyone but the socket's owner
+# lists nothing there, and the router's LaunchDaemon does not run as the account
+# installing it — which is how this reported "nothing is listening" while zenohd
+# was up on both addresses (fm-comms#20). Both addresses, one at a time, so a
+# router that came up on the tailnet and missed the LAN is named as that rather
+# than as a pass.
+#
+# The socket table is still read afterwards, privileged, for the one thing a
+# connection cannot see: an extra or wildcard listener. A host that will not show
+# it says so and the install continues — the wildcard is already refused at
+# render time and in CI, and a check that cannot run must not masquerade as one
+# that passed.
 verify_listeners() {
-  local port="${FM_ROUTER_PORT:-7447}" want listeners endpoint addr missing=""
+  local port="${FM_ROUTER_PORT:-7447}" want listeners endpoint addr pending
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would check that zenohd listens on:"
+    fm_log "  would check that zenohd answers on:"
     fm_router_listen_list | sed 's/^/    /'
     return 0
   fi
   want="$(fm_router_listen_list)" || return 1
 
   # zenohd binds after launchd or systemd has started it, not before.
-  local waited=0 ok=0
-  while [ "$waited" -lt 15 ]; do
-    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-    [ -n "$listeners" ] && { ok=1; break; }
+  local waited=0
+  while :; do
+    pending=""
+    while IFS= read -r endpoint; do
+      [ -n "$endpoint" ] || continue
+      addr="${endpoint#tcp/}"
+      addr="${addr%:*}"
+      fm_tcp_listening "$addr" "$port" || pending="${pending:+$pending }$endpoint"
+    done <<EOF
+$want
+EOF
+    [ -z "$pending" ] && break
+    [ "$waited" -ge 15 ] && break
     sleep 1
     waited=$((waited + 1))
   done
-  if [ "$ok" != 1 ]; then
-    fm_err "nothing is listening on $port after ${waited}s"
+
+  if [ -n "$pending" ]; then
+    fm_err "the router is not answering on: $pending (after ${waited}s)"
     fm_err "  read the log: $LOG_DIR/zenohd.err.log (macOS) or journalctl -u $UNIT (linux)"
+    listeners="$(fm_tcp_listeners "$port")"
+    [ -n "$listeners" ] && printf '%s\n' "$listeners" >&2
     return 1
   fi
 
-  if printf '%s' "$listeners" | grep -qE '(\*|0\.0\.0\.0|\[::\]):'"$port"; then
+  listeners="$(fm_tcp_listeners "$port")"
+  if [ -z "$listeners" ]; then
+    fm_warn "  could not read this host's socket table, so nothing checked for an extra listener"
+    fm_warn "  see them yourself with: sudo lsof -nP -iTCP:$port -sTCP:LISTEN"
+  elif printf '%s' "$listeners" | grep -qE '(\*|0\.0\.0\.0|\[::\]):'"$port"; then
     fm_err "the router is bound to every interface; it must bind the LAN and the tailnet only"
     printf '%s\n' "$listeners" >&2
     return 1
   fi
 
-  while IFS= read -r endpoint; do
-    [ -n "$endpoint" ] || continue
-    addr="${endpoint#tcp/}"
-    printf '%s' "$listeners" | grep -q "$addr" || missing="${missing:+$missing }$endpoint"
-  done <<EOF
-$want
-EOF
-  if [ -n "$missing" ]; then
-    fm_err "the router is listening, but not on: $missing"
-    printf '%s\n' "$listeners" >&2
-    return 1
-  fi
-
-  fm_log "  listening on:"
+  fm_log "  answering on:"
   printf '%s\n' "$want" | sed 's/^/    /'
+  # Explicit, so the function's exit status is the verdict of the check and not
+  # whatever the last line of formatting returned.
+  return 0
 }
 
 do_install() {
