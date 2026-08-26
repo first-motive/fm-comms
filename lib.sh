@@ -475,11 +475,16 @@ fm_comms_render() {
   esac
 }
 
-# Fingerprint of the key Eclipse signs the Zenoh debian repo with, taken from the
-# signature on https://download.eclipse.org/zenoh/debian-repo/Release. Pinned here
-# so a swapped key is caught: fetching a key over TLS only proves who served it,
+# Fingerprint of the key Eclipse signs the Zenoh debian repo with. Pinned here so
+# a swapped key is caught: fetching a key over TLS only proves who served it,
 # not that it is the key we meant to trust.
-FM_ZENOH_APT_FINGERPRINT="C09537EDCF795D136EA8CB50829768EDD9BD8B8F"
+#
+# This is the PRIMARY fingerprint of "Eclipse Zenoh <zenoh-dev@eclipse.org>"
+# (created 2024-11-18). The Release file is signed by its subkey
+# C09537EDCF795D136EA8CB50829768EDD9BD8B8F; the check below accepts a match on
+# either, because gpg lists the primary first and a pin on the subkey alone
+# never matched the served key (fm-ws-01, 2026-08-26).
+FM_ZENOH_APT_FINGERPRINT="0ABC5913672BBE50921B3B9395D19EA1F7DF9E8E"
 FM_ZENOH_APT_KEY_URL="https://download.eclipse.org/zenoh/debian-repo/zenoh-public-key"
 FM_ZENOH_APT_KEYRING="/etc/apt/keyrings/eclipse-zenoh.gpg"
 
@@ -506,8 +511,10 @@ fm_apt_add_zenoh_repo() {
   tmp="$(mktemp -d)"
   # Every path out of here — a failed fetch, a bad fingerprint, or success — must
   # take the scratch keyring with it, so set the cleanup once rather than at each
-  # return.
-  trap 'rm -rf "$tmp"' RETURN
+  # return. `${tmp:-}` because a RETURN trap can fire again in the caller's
+  # frame, where `tmp` is unset and `set -u` would abort the install after the
+  # repo was already added (fm-ws-01, 2026-08-26).
+  trap 'rm -rf "${tmp:-}"; trap - RETURN' RETURN
   curl -fsSL "$FM_ZENOH_APT_KEY_URL" -o "$tmp/key.asc"
 
   # Import into a throwaway keyring so the fingerprint can be read before the key
@@ -515,11 +522,12 @@ fm_apt_add_zenoh_repo() {
   local got
   got="$(gpg --no-default-keyring --keyring "$tmp/ring.gpg" --quiet --import "$tmp/key.asc" \
          && gpg --no-default-keyring --keyring "$tmp/ring.gpg" --list-keys --with-colons \
-            | awk -F: '/^fpr:/ {print $10; exit}')"
-  if [ "$got" != "$FM_ZENOH_APT_FINGERPRINT" ]; then
+            | awk -F: '/^fpr:/ {print $10}')"
+  # Every fingerprint on the key — primary and subkeys — one per line.
+  if ! printf '%s\n' "$got" | grep -qx "$FM_ZENOH_APT_FINGERPRINT"; then
     fm_err "the Zenoh apt key does not match the pinned fingerprint"
     fm_err "  expected $FM_ZENOH_APT_FINGERPRINT"
-    fm_err "  served   ${got:-<none>}"
+    fm_err "  served   $(printf '%s' "${got:-<none>}" | tr '\n' ' ')"
     return 1
   fi
 
