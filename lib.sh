@@ -612,9 +612,11 @@ fm_comms_render() {
       # reads no such thing, and the Mac has no /etc/fm-comms.env to read.
       FM_ZENOH_BRIDGE_BIN="${FM_ZENOH_BRIDGE_BIN:-$(fm_zenoh_bridge_bin)}" \
       FM_BRIDGE_CONFIG="${FM_BRIDGE_CONFIG:-$FM_COMMS_USER_CONF_DIR/bridge.json5}" \
+      FM_CYCLONEDDS_URI="${FM_CYCLONEDDS_URI:-file://$FM_COMMS_USER_CONF_DIR/cyclonedds.xml}" \
       FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_USER_LOG_DIR}" \
         fm_render_template "$root/launchd/$FM_LAUNCHD_BRIDGE_LABEL.plist.in" "$dest" \
-          FM_ZENOH_BRIDGE_BIN FM_BRIDGE_CONFIG FM_COMMS_LOG_DIR FM_ROS_DOMAIN_ID
+          FM_ZENOH_BRIDGE_BIN FM_BRIDGE_CONFIG FM_CYCLONEDDS_URI FM_COMMS_LOG_DIR \
+          FM_ROS_DOMAIN_ID
       ;;
     episodes)
       # The checkout and the account that owns it are read off this host rather

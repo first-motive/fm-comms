@@ -143,6 +143,11 @@ install_agent_macos() {
   run mkdir -p "$USER_CONF_DIR" "$LOG_DIR" "$(dirname "$AGENT_PLIST")"
   render_config "$USER_CONF_DIR/bridge.json5" || return 1
 
+  # The DDS side, which launchd cannot inherit from a shell. Static, so it is
+  # copied rather than rendered.
+  fm_log "  installing $USER_CONF_DIR/cyclonedds.xml"
+  run install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$USER_CONF_DIR/cyclonedds.xml"
+
   fm_log "  installing $AGENT_PLIST"
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would write $AGENT_PLIST:"
@@ -200,7 +205,7 @@ do_uninstall() {
     fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package"
   else
     run launchctl bootout "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
-    run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5"
+    run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5" "$USER_CONF_DIR/cyclonedds.xml"
     # The logs outlive the job on purpose: the reason a bridge was removed is
     # usually in them, and this is the moment someone wants to read it.
     fm_log "  left in place: $ENV_FILE, $LOG_DIR, and the zenoh-bridge-ros2dds binary"

@@ -18,6 +18,7 @@
   Placeholders:
     FM_ZENOH_BRIDGE_BIN   absolute path to zenoh-bridge-ros2dds
     FM_BRIDGE_CONFIG      the rendered bridge.json5
+    FM_CYCLONEDDS_URI     the installed bridge-cyclonedds.xml, as a file:// URI
     FM_COMMS_LOG_DIR      where stdout and stderr land
     FM_ROS_DOMAIN_ID      the DDS domain this Mac's nodes run on
 -->
@@ -33,19 +34,36 @@
     <string>${FM_BRIDGE_CONFIG}</string>
   </array>
 
-  <!-- launchd reads no EnvironmentFile, and a Mac carries no /etc/fm-comms.env,
-       so the two values the bridge needs from the environment are rendered in.
+  <!-- launchd reads no EnvironmentFile and sources no shell profile, so every
+       value the bridge needs from the environment is rendered in here. On a rig
+       the systemd unit gets these from /etc/fm-comms.env and the container's own
+       ROS setup; on a Mac there is no equivalent, and a bridge that inherits
+       nothing joins a different DDS graph from the nodes it exists to bridge.
 
        ROS_DISTRO because the bridge maps DDS types and QoS per distro and
        assumes `iron` when it is unset; every First Motive machine runs Humble.
+
        ROS_DOMAIN_ID because the bridge joins this Mac's own DDS graph and must
-       be on the same domain as the nodes it is bridging for. -->
+       be on the same domain as the nodes it is bridging for.
+
+       ROS_LOCALHOST_ONLY because under this transport DDS never crosses a
+       network — carrying traffic between machines is this process's job, and a
+       participant that also announced on the LAN would duplicate what Zenoh
+       already carries.
+
+       CYCLONEDDS_URI because loopback has no multicast, so Cyclone falls back to
+       unicast discovery, which caps at nine participants by default. See
+       zenoh/bridge-cyclonedds.xml for what happens at the tenth. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>ROS_DISTRO</key>
     <string>humble</string>
     <key>ROS_DOMAIN_ID</key>
     <string>${FM_ROS_DOMAIN_ID}</string>
+    <key>ROS_LOCALHOST_ONLY</key>
+    <string>1</string>
+    <key>CYCLONEDDS_URI</key>
+    <string>${FM_CYCLONEDDS_URI}</string>
   </dict>
 
   <key>RunAtLoad</key>
