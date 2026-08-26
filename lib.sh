@@ -269,6 +269,47 @@ fm_router_listen() {
   printf 'tcp/%s:%s\n' "$ip" "${FM_ROUTER_PORT:-7447}"
 }
 
+# --- The router on macOS -----------------------------------------------------
+
+# The launchd job's reverse-DNS label, which is also its plist's basename. Named
+# once here because the installer loads, unloads, and removes the job by it, and
+# a label that disagrees with the filename leaves a daemon nothing can stop.
+FM_LAUNCHD_LABEL=ai.firstmotive.zenohd
+
+# Where the rendered configs and the daemon's logs go on a router host.
+FM_COMMS_CONF_DIR="${FM_COMMS_CONF_DIR:-/etc/fm-comms}"
+FM_COMMS_LOG_DIR_DEFAULT="${FM_COMMS_LOG_DIR_DEFAULT:-/usr/local/var/log/fm-comms}"
+
+# Echo the absolute path to zenohd.
+#
+# launchd resolves no PATH, so the plist needs the real location. Homebrew's
+# prefix differs between Apple silicon and Intel, so it is asked rather than
+# assumed; a plain `zenohd` on PATH covers a manual install.
+fm_zenohd_bin() {
+  local found
+  found="$(command -v zenohd 2>/dev/null)" && [ -n "$found" ] && {
+    printf '%s\n' "$found"; return 0
+  }
+  local prefix
+  for prefix in /opt/homebrew /usr/local; do
+    [ -x "$prefix/bin/zenohd" ] && { printf '%s\n' "$prefix/bin/zenohd"; return 0; }
+  done
+  fm_err "zenohd is not on this host — install it first (./install.sh --role router)"
+  return 1
+}
+
+# Return success when this macOS host is itself a virtual machine.
+#
+# The router belongs on the office Mac mini's HOST, never inside the CI guest it
+# also runs. That guest is ephemeral and network isolated by design: a router
+# installed there answers nothing while it exists and disappears when the job
+# ends, and the failure looks like a fleet-wide outage rather than a misplaced
+# install. kern.hv_vmm_present is the kernel's own answer to "am I virtualised",
+# so the check does not depend on recognising a particular hypervisor.
+fm_macos_is_vm() {
+  [ "$(sysctl -n kern.hv_vmm_present 2>/dev/null || echo 0)" = "1" ]
+}
+
 # --- Host configuration ------------------------------------------------------
 
 # Where the fleet-wide values live. Per-host facts moved to the identity card;
@@ -403,6 +444,22 @@ fm_comms_render() {
       fm_render_template "$template" "$dest" \
         FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
       ;;
+    launchd)
+      # The router's macOS daemon. Rendered through the same path as the configs
+      # so `./run.sh render launchd` shows exactly what an install would load —
+      # a plist that can only be inspected by loading it is how a Mac ends up
+      # running a daemon nobody can account for.
+      local listen="${FM_ROUTER_LISTEN:-}"
+      if [ -z "$listen" ]; then
+        listen="$(fm_router_listen)" || return 1
+      fi
+      FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-$(fm_zenohd_bin)}" \
+      FM_ROUTER_CONFIG="${FM_ROUTER_CONFIG:-$FM_COMMS_CONF_DIR/router.json5}" \
+      FM_COMMS_USER="${FM_COMMS_USER:-${SUDO_USER:-$USER}}" \
+      FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}" \
+        fm_render_template "$root/launchd/$FM_LAUNCHD_LABEL.plist.in" "$dest" \
+          FM_ZENOHD_BIN FM_ROUTER_CONFIG FM_COMMS_USER FM_COMMS_LOG_DIR
+      ;;
     episodes)
       # The checkout and the account that owns it are read off this host rather
       # than written down anywhere: the unit is rendered on the machine it runs on.
@@ -412,7 +469,7 @@ fm_comms_render() {
           FM_COMMS_CHECKOUT FM_COMMS_USER FM_EPISODES_DIR
       ;;
     *)
-      fm_err "unknown render kind: $kind (use router | bridge | episodes)"
+      fm_err "unknown render kind: $kind (use router | bridge | launchd | episodes)"
       return 1
       ;;
   esac

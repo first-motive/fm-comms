@@ -10,6 +10,7 @@
 #
 #     ./run.sh render bridge            what /etc/fm-comms/bridge.json5 would be
 #     ./run.sh render router            what /etc/fm-comms/router.json5 would be
+#     ./run.sh render launchd           the router's macOS LaunchDaemon plist
 #     ./run.sh render episodes          what the episodes unit would be
 #     ./run.sh render show              the host facts every render resolves from
 #     ./run.sh render bridge -o out.json5
@@ -33,7 +34,8 @@ render — print this host's config as the installers would write it
 Usage: ./run.sh render <what> [-o FILE]
 
   router      the zenohd config
-  bridge      the ROS 2 bridge config for this rig's FM_BRIDGE_PROFILE
+  launchd     the router's macOS LaunchDaemon plist
+  bridge      the ROS 2 bridge config for this rig's workload
   episodes    the episode queryable's systemd unit
   show        the resolved host facts, one per line
 
@@ -99,7 +101,7 @@ main() {
 
   case "$what" in
     show) show ;;
-    router|bridge|episodes) fm_comms_render "$what" "$dest" ;;
+    router|launchd|bridge|episodes) fm_comms_render "$what" "$dest" ;;
     *) fm_err "unknown render target: $what"; usage; return 1 ;;
   esac
 }

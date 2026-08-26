@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ai.firstmotive.zenohd — the Zenoh router as a macOS LaunchDaemon.
+
+  A TEMPLATE, hence the .in suffix. launchd expands nothing at load time, so
+  every path here must be literal by the time launchd reads the file;
+  `scripts/install-router.sh` renders it with fm_render_template, the same path
+  the Zenoh configs take.
+
+  A LaunchDaemon and not a LaunchAgent: the router must come up when the machine
+  boots, whether or not anyone has logged in. An Agent would leave the fleet
+  without a discovery point after every unattended reboot — which is the whole
+  reason the router moved off the workstation.
+
+  This runs on the HOST. Never inside the machine's CI guest: that guest is
+  ephemeral and network isolated by design, so a router there vanishes with the
+  next job and is unreachable in the meantime.
+
+  Placeholders:
+    FM_ZENOHD_BIN       absolute path to zenohd, from the brew prefix
+    FM_ROUTER_CONFIG    the rendered router.json5
+    FM_COMMS_USER       the account the daemon runs as (nothing here needs root)
+    FM_COMMS_LOG_DIR    where stdout and stderr land
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.firstmotive.zenohd</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${FM_ZENOHD_BIN}</string>
+    <string>--config</string>
+    <string>${FM_ROUTER_CONFIG}</string>
+  </array>
+
+  <!-- The router terminates transports and reads no robot data; it needs no
+       privilege, so it drops to the account that installed it. -->
+  <key>UserName</key>
+  <string>${FM_COMMS_USER}</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- launchd's default is to stop respawning a job that exits repeatedly. The
+       router binds a tailnet address, and at boot the tailnet is not up yet — so
+       the first few starts are expected to fail, and giving up on them would
+       leave the fleet with no router at all. Ten seconds between attempts, and
+       no ceiling on how many. This mirrors StartLimitIntervalSec=0 on the
+       systemd unit beside it. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenohd.log</string>
+  <key>StandardErrorPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenohd.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
