@@ -55,7 +55,16 @@ queryable — carries a real suite:
 ```bash
 shellcheck $(find . -name '*.sh' -not -path './.git/*')
 uv run --project episodes pytest -q
+uv run scripts/ci/check-transport.py     # renders + invariants, no network
+./scripts/ci/smoke-transport.sh          # bridge <-> router session, needs docker
 ```
+
+`check-transport.py` is the one that grades the configs: it renders every
+template against a fixture card, then compiles the allow rules and matches them
+against real topic names, so a rule that would admit a raw frame or an inbound
+trajectory fails the pull request. `smoke-transport.sh` answers what rendering
+cannot — whether a bridge and a router at the pinned version form a session —
+by asserting the router's own session count through its admin space.
 
 The queryable's logic lives in `episodes/episodes/store.py`, `query.py`, and
 `machine.py`, which import no Zenoh at all; `service.py` is the only module that
