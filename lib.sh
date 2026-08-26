@@ -168,6 +168,23 @@ fm_machine_get() {
   printf '%s\n' "$value"
 }
 
+# fm_machine_get_opt FIELD — echo one OPTIONAL field, or nothing.
+#
+# Separate from fm_machine_get because the two failures are not the same thing.
+# A missing `name` is a broken card and must stop a render; a missing `workload`
+# is an ordinary laptop, and a reader that treated the two alike would either
+# refuse a valid card or accept a broken one. Absence here is silence and
+# success; a card that cannot be trusted at all still fails.
+fm_machine_get_opt() {
+  local field="$1"
+  fm_machine_exists || return 0
+  # The card is validated first, through the strict reader on a field every card
+  # is required to carry. That keeps an unparseable or wrong-schema card a hard
+  # failure here too — only the absence of THIS field is tolerated.
+  fm_machine_get schema_version >/dev/null || return 1
+  jq -er --arg f "$field" '.[$f] // empty' "$(fm_machine_file)" 2>/dev/null || return 0
+}
+
 # fm_machine_namespace [NAME] — echo the ROS namespace derived from a machine
 # name, defaulting to this machine's.
 #
@@ -203,6 +220,53 @@ fm_comms_require_transport() {
   fm_err "  migrate the host with 'fm machine init --transport $FM_COMMS_TRANSPORT' once its hardware"
   fm_err "  has been validated, or set FM_COMMS_ALLOW_TRANSPORT_MISMATCH=1 to override for a bench test"
   return 1
+}
+
+# --- The router's bind address ----------------------------------------------
+
+# Echo this host's tailnet IPv4 address.
+#
+# The router binds to the tailnet and to nothing else, so this address is the one
+# fact its config needs and the one that must never be committed. It is read off
+# the running host at render time rather than written into a file: a tailnet
+# address is per-host, and a per-host value in git is the bug this repo's
+# boundaries name explicitly.
+#
+# macOS ships the CLI inside the app bundle, which is not on PATH, so the bundle
+# path is tried after the plain command rather than instead of it — a Mac with
+# the standalone CLI installed must keep using it.
+fm_tailnet_ip() {
+  local cli ip
+  for cli in tailscale /usr/bin/tailscale \
+             /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
+    fm_has_cmd "$cli" || [ -x "$cli" ] || continue
+    ip="$("$cli" ip -4 2>/dev/null | head -1)" || continue
+    [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
+  done
+  return 1
+}
+
+# Echo the endpoint zenohd listens on: tcp/<tailnet-ip>:<port>.
+#
+# Binding to every interface (tcp/[::]:7447) was the old default and is what this
+# replaces. The router now sits on an always-on office machine that also carries
+# an office LAN and, on Rune, an ephemeral CI guest network — listening on all of
+# them offers the fleet's whole topic graph to anything that can reach the box.
+# The tailnet is already the fleet's authenticated perimeter, so the socket is
+# put there and nowhere else.
+#
+# FM_ROUTER_BIND_IP forces the address for a host with no tailnet — a two-container
+# CI smoke, or a bench test on an isolated LAN.
+fm_router_listen() {
+  local ip="${FM_ROUTER_BIND_IP:-}"
+  if [ -z "$ip" ]; then
+    ip="$(fm_tailnet_ip)" || {
+      fm_err "cannot resolve this host's tailnet address, and the router binds to the tailnet only"
+      fm_err "  bring Tailscale up on this host, or set FM_ROUTER_BIND_IP=<addr> for a bench run"
+      return 1
+    }
+  fi
+  printf 'tcp/%s:%s\n' "$ip" "${FM_ROUTER_PORT:-7447}"
 }
 
 # --- Host configuration ------------------------------------------------------
@@ -257,15 +321,29 @@ fm_comms_resolve() {
 
 # Echo the bridge profile this rig runs: recorder | processor | robot.
 #
-# Still read from the env file. The card says what kind of machine this is
-# (workstation, jetson, mac) but not what work it does, and a recorder rig and a
-# processor rig are both jetsons — so the topic set cannot be derived from any
-# field the card currently carries. See the README for the proposed `workload`
-# field that would let this join the others.
+# Taken from the card's `workload`, which is the field that answers the question
+# `role` cannot — a recorder rig and a processor rig are both jetsons. That was
+# the last per-host value anyone still typed into an env file by hand, and it is
+# now derived like every other one. FM_BRIDGE_PROFILE still wins when it is set,
+# so a bench experiment needs no card edit.
+#
+# `router` is a workload that runs no bridge, and it is refused here by name: a
+# router host asked for a bridge config is a mistake worth stating rather than a
+# missing file to report.
 fm_comms_bridge_profile() {
   local profile="${FM_BRIDGE_PROFILE:-}"
   if [ -z "$profile" ]; then
-    fm_err "FM_BRIDGE_PROFILE is unset — set it in $FM_COMMS_ENV_FILE (recorder | processor | robot)"
+    profile="$(fm_machine_get_opt workload)" || return 1
+  fi
+  if [ "$profile" = router ]; then
+    fm_err "this host's workload is 'router' — it runs zenohd, not a bridge"
+    fm_err "  install it with: ./install.sh --role router"
+    return 1
+  fi
+  if [ -z "$profile" ]; then
+    fm_err "no bridge profile for this host"
+    fm_err "  the card names one: fm machine init --workload <recorder|processor|robot>"
+    fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
   fi
   # The profile becomes a path segment, so hold it to the shape a filename can
@@ -310,7 +388,15 @@ fm_comms_render() {
 
   case "$kind" in
     router)
-      fm_render_template "$root/zenoh/router.json5" "$dest" FM_ROUTER_PORT
+      # Resolved here rather than in fm_comms_resolve: only the router binds a
+      # socket, and a recorder rendering its bridge must not be made to fail
+      # because the laptop it is being rehearsed from has no tailnet.
+      local listen="${FM_ROUTER_LISTEN:-}"
+      if [ -z "$listen" ]; then
+        listen="$(fm_router_listen)" || return 1
+      fi
+      FM_ROUTER_LISTEN="$listen" \
+        fm_render_template "$root/zenoh/router.json5" "$dest" FM_ROUTER_LISTEN
       ;;
     bridge)
       template="$(fm_comms_bridge_template)" || return 1

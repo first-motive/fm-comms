@@ -58,15 +58,23 @@ show() {
     fm_log "  role          $(fm_machine_get role)"
     fm_log "  fleet         $(fm_machine_get fleet)"
     fm_log "  transport     $(fm_machine_get transport)"
+    fm_log "  workload      $(fm_machine_get_opt workload || true)"
     fm_log "  workspace     $(fm_machine_get workspace)"
   else
     fm_warn "no identity card at $(fm_machine_file) — per-host values must come from the environment"
   fi
   fm_log "resolved"
   fm_log "  namespace     ${FM_RIG_NAMESPACE:-<unset>}"
-  fm_log "  profile       ${FM_BRIDGE_PROFILE:-<unset>}"
+  # Derived, so it is resolved here rather than echoed back from the environment
+  # — the whole point of `show` is to prove what this host WOULD render, and an
+  # unset variable says nothing about the card the profile now comes from.
+  fm_log "  profile       $(fm_comms_bridge_profile 2>/dev/null || echo '<none — this host runs no bridge>')"
   fm_log "  router        ${FM_ROUTER_ENDPOINT:-<unset>}"
   fm_log "  router port   ${FM_ROUTER_PORT:-<unset>}"
+  # The bind address only matters on the router itself, and resolving it needs a
+  # tailnet — so it is reported when it resolves and named as absent when it does
+  # not, rather than failing a `render show` run from a laptop.
+  fm_log "  router listen $(fm_router_listen 2>/dev/null || echo '<no tailnet on this host>')"
   fm_log "  ROS domain    ${FM_ROS_DOMAIN_ID:-<unset>}"
   fm_log "  episodes dir  ${FM_EPISODES_DIR:-<unset>}"
 }

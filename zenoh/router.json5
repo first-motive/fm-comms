@@ -1,8 +1,15 @@
-/// zenohd — the single First Motive router, on the office workstation.
+/// zenohd — the single First Motive router, on the always-on office machine.
 ///
 /// Every bridge and every client connects here in `client` mode, so this process
 /// is the one place the whole fleet meets. Nothing else runs a router: a second
 /// one would partition the fleet or duplicate every sample.
+///
+/// The router does NOT live on the GPU workstation. That machine is wiped,
+/// rebooted, and loaded with sim and inference, and every reboot takes the whole
+/// fleet's discovery point with it. It lives on the office Mac mini, which is
+/// always on, wired, and on the tailnet — and it runs on that machine's HOST,
+/// under launchd, never inside its CI guest. The guest is ephemeral and network
+/// isolated by design; a router there is a router that disappears.
 ///
 /// This file is a TEMPLATE. `scripts/install-router.sh` renders it and writes the
 /// result to /etc/fm-comms/router.json5. Committed files carry placeholders only —
@@ -11,17 +18,24 @@
 ///     ./run.sh render router
 ///
 /// Placeholders:
-///   FM_ROUTER_PORT        TCP port to listen on. Fleet-wide, from
-///                         /etc/fm-comms.env (7447 by convention).
+///   FM_ROUTER_LISTEN      the one endpoint zenohd binds, tcp/<tailnet-ip>:<port>.
+///                         Resolved on the host at render time from `tailscale ip
+///                         -4` and FM_ROUTER_PORT (7447 by convention), so the
+///                         address is never written into a tracked file. Force it
+///                         with FM_ROUTER_BIND_IP on a host with no tailnet.
 {
   mode: "router",
 
-  /// Listen on every interface so the tailnet address and the LAN address both
-  /// work. Reachability is the tailnet ACL's job, not this file's — the router
-  /// is not exposed to the public internet, so there is no TLS/mTLS here. See
-  /// docs/REMOTE.md for how a contractor is granted router:7447 and nothing else.
+  /// One endpoint, on the tailnet interface and nowhere else.
+  ///
+  /// Binding every interface would offer the fleet's whole topic graph to the
+  /// office LAN and — on the Mac mini — to its CI guest network as well. The
+  /// tailnet is already the fleet's authenticated perimeter, so the socket goes
+  /// there and the perimeter stays the one thing granting access. That is what
+  /// lets this run without TLS/mTLS. See docs/REMOTE.md for how a contractor is
+  /// granted router:7447 and nothing else.
   listen: {
-    endpoints: ["tcp/[::]:${FM_ROUTER_PORT}"],
+    endpoints: ["${FM_ROUTER_LISTEN}"],
   },
 
   /// The fleet is explicit: bridges and clients are configured with this router's
