@@ -138,6 +138,13 @@ install_unit_linux() {
   run sudo mkdir -p "$CONF_DIR"
   render_config "$CONF_DIR/bridge.json5" || return 1
 
+  # The same Cyclone profile the macOS agent gets (#23): without it the bridge
+  # runs stock discovery — default interface, ~9-participant loopback ceiling —
+  # and quietly misses nodes past the ceiling; fm-rec-01's cameras never
+  # crossed while every gate line around them stayed green.
+  fm_log "  installing $CONF_DIR/cyclonedds.xml"
+  run sudo install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$CONF_DIR/cyclonedds.xml"
+
   fm_log "  installing $UNIT"
   run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
   run sudo systemctl daemon-reload
