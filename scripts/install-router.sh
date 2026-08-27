@@ -62,6 +62,9 @@ install_linux() {
   # Pinned exactly: an unpinned upgrade would drift this router away from the
   # bridges and silently break the fleet on a routine apt upgrade.
   run sudo apt-get install -y "zenoh=$version"
+  # Held for the same reason the bridge is (#21): the pin picks the version once,
+  # the hold keeps a routine `apt upgrade` from moving the router off the fleet.
+  run sudo apt-mark hold zenoh
 }
 
 install_macos() {
@@ -280,6 +283,7 @@ do_uninstall() {
     run sudo systemctl disable --now "$UNIT" || true
     run sudo rm -f "/etc/systemd/system/$UNIT"
     run sudo systemctl daemon-reload
+    run sudo apt-mark unhold zenoh 2>/dev/null || true
   else
     run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
     run sudo rm -f "$PLIST"

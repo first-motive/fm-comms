@@ -71,6 +71,11 @@ install_linux() {
   # Pinned exactly: an unpinned upgrade would drift this rig away from the router
   # and silently drop it off the fleet on a routine apt upgrade.
   run sudo apt-get install -y "zenoh-bridge-ros2dds=$version"
+  # The pin above only chooses what to install; a later `apt upgrade` — fm-setup's
+  # own system-update step included — would move it to whatever the Eclipse repo
+  # serves next (1.10.0 landed on fm-ws-01 that way, #21). Hold it so the version
+  # changes only when zenoh/zenoh.version does.
+  run sudo apt-mark hold zenoh-bridge-ros2dds
 }
 
 install_macos() {
@@ -241,7 +246,10 @@ do_uninstall() {
     # Only what this script placed. $ENV_FILE holds the operator's own values, so
     # it survives an uninstall and a later reinstall picks it back up.
     run sudo rm -f "$CONF_DIR/bridge.json5"
-    fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package"
+    # The package stays, but not pinned: once fm-comms no longer manages it,
+    # apt may move it freely.
+    run sudo apt-mark unhold zenoh-bridge-ros2dds 2>/dev/null || true
+    fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"
   else
     run launchctl bootout "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
     run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5" "$USER_CONF_DIR/cyclonedds.xml"
