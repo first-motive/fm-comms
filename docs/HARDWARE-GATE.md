@@ -12,7 +12,7 @@ the fleet, not of the machine you happened to retest.
 
 ## Before You Start
 
-Four machines, all converged on the `v*-zenoh.3` pre-release tags (fm-ros2 and
+Four machines, all converged on the `v*-zenoh.4` pre-release tags (fm-ros2 and
 fm-docker stay on `.1` unless they moved):
 
 | Machine | Role | Workload | What it runs |
@@ -34,6 +34,25 @@ fm --version
 cat comms/zenoh/zenoh.version
 git -C comms describe --tags
 ```
+
+**Every `ros2` line you run on the Mac: stop the daemon first.**
+
+```bash
+ros2 daemon stop
+```
+
+The ROS 2 daemon caches the graph it discovered when it started. On a Mac that
+has been bridged, unbridged, and rebridged, a stale one answers `ros2 topic hz`
+with nothing at all — for ten seconds, then a timeout that reads exactly like a
+transport that is not carrying the topic. It is not. Stop the daemon once at the
+start of each session on the Mac, and again after the bridge is reinstalled, and
+none of the lines below will lie to you.
+
+**A reinstall restarts the service.** `install.sh --role bridge` rerenders the
+config and then restarts the unit (Linux) or kickstarts the agent (macOS), and
+the router's installer bootouts and bootstraps its LaunchDaemon. The log names
+which it did. Before `v0.2.0-zenoh.4` it did neither, and a rig kept running the
+profile it had at first start (fm-comms#20).
 
 ---
 
@@ -146,7 +165,7 @@ bridge>` means the card was never given a workload; fix it with
 
 ```bash
 fm device ssh <machine> -- 'systemctl is-active fm-zenoh-bridge'
-ssh rune 'curl -s http://127.0.0.1:8000/@/local/router | jq ".[0].value.sessions | length"'
+ssh rune 'sudo lsof -nP -iTCP:7447 -sTCP:ESTABLISHED'
 ```
 
 On the Mac:
@@ -155,16 +174,20 @@ On the Mac:
 launchctl print "gui/$(id -u)/ai.firstmotive.zenoh-bridge" | grep -E 'state|pid'
 ```
 
-**Pass:** `active` on the rigs, `state = running` with a pid on the Mac, and the
-session count on Rune rises by one per bridge. With both rigs and the Mac
-connected it should read **3**.
-**Fail:** running with a session count of 0 is the important case — the bridge
+`lsof` and not the router's admin space: the REST plugin is off unless zenohd is
+started with `--rest-http-port`, and a gate line that requires editing the
+router's configuration is measuring a router the fleet does not run. The
+established connections on 7447 are the sessions, and they are already there to
+be read. `sudo` for the same reason as 1.3 — the socket belongs to the
+LaunchDaemon's root process, and an unprivileged `lsof -i` on macOS lists only
+the caller's own.
+
+**Pass:** `active` on the rigs, `state = running` with a pid on the Mac, and one
+`ESTABLISHED` peer on Rune per connected bridge. With both rigs and the Mac up
+that is **3 rows**, each showing the peer address of one of them.
+**Fail:** running with no row for that machine is the important case — the bridge
 started and never connected. Read `journalctl -u fm-zenoh-bridge -n 50` on a rig,
 or `tail -50 ~/Library/Logs/fm-comms/zenoh-bridge.err.log` on the Mac.
-
-> The router's REST admin space is not on by default. For the gate, start
-> `zenohd` with `--rest-http-port 8000` bound to loopback, and take the flag off
-> afterwards.
 
 ---
 
@@ -177,7 +200,8 @@ fm device ssh fm-ws-01 -- 'fm stack up --backend mujoco'
 fm device ssh fm-ws-01 -- 'ros2 topic hz /joint_states'
 ```
 
-**Pass:** ~100 Hz, steady.
+**Pass:** ~100 Hz, steady. This is the rate on the workstation's own DDS graph,
+before the bridge. What crosses Zenoh is capped lower — see 3.2.
 
 ### 3.2 The Mac sees it, wired
 
@@ -185,7 +209,14 @@ fm device ssh fm-ws-01 -- 'ros2 topic hz /joint_states'
 ros2 topic hz /fm_ws_01/joint_states
 ```
 
-**Pass:** within 1 Hz of what the workstation reported, jitter under 1 ms.
+**Pass:** between 45 and 50 Hz, jitter under 1 ms.
+
+**Not 100 Hz, by design.** The `workstation` profile sets
+`pub_max_frequencies /joint_states=50`, inherited from `bridge-robot.json5` —
+see `comms/zenoh/bridge-workstation.json5`. The bridge downsamples on the
+publishing side, so 100 Hz on the workstation's own graph is ~50 Hz on the
+fabric, and a reading near 100 here would mean the cap is not being applied.
+
 **Note:** the topic is namespaced. `/joint_states` unprefixed means you are
 reading a local publisher, not the workstation's — that is a fail, not a pass.
 
@@ -193,10 +224,31 @@ reading a local publisher, not the workstation's — that is a fail, not a pass.
 
 Same command, Ethernet unplugged.
 
-**Pass:** same rate, within 1 Hz. This is the line the whole migration is for:
-AP multicast filtering is what broke the DDS path, and zenoh's TCP session to
-the router is not subject to it.
+**Pass:** ≥45 Hz sustained over 30 s, with no gap over 0.5 s. No jitter number
+on this line — jitter under 1 ms is a wired-LAN figure, and over WireGuard on
+Wi-Fi the spacing is uneven by nature without the stream being unusable. Rate
+and gaps are what matter here.
+
+This is the line the whole migration is for: AP multicast filtering is what
+broke the DDS path, and zenoh's TCP session to the router is not subject to it.
+
+**Worked example — first traffic, 2026-08-27 01:24.** The Mac off-site on Wi-Fi,
+through the tailnet to Rune and on to fm-ws-01's sim:
+
+```
+average rate: 44.600
+  min: 0.000s max: 0.190s std dev: 0.02669s window: 425
+```
+
+Steady, no gap near 0.5 s, and the shape this line is looking for. The rate sits
+0.4 Hz under the bar above — close enough that it is not a fail on the transport
+and not a pass on the criterion either. Rerun it on the gate: ≥45 Hz confirms
+the threshold, and a second reading in the 44s is the evidence for lowering it,
+recorded in the pull request rather than waved through.
+
 **Fail:** works wired and not wireless means something is still using multicast.
+**Fail:** any gap over 0.5 s. A rate that averages well while stalling for half a
+second is a teleop link that drops commands.
 
 ### 3.4 The Jetson sees it
 
@@ -204,7 +256,8 @@ the router is not subject to it.
 fm device ssh fm-rec-01 -- 'ros2 topic hz /fm_ws_01/joint_states'
 ```
 
-**Pass:** within 1 Hz.
+**Pass:** between 45 and 50 Hz — the same cap as 3.2, applied at the
+workstation's bridge, so every subscriber on the fabric sees it.
 
 ### 3.5 The sim-first loop runs on zenoh, on one host
 
@@ -372,11 +425,12 @@ the point: the two profiles are separate worlds.
 Pull the Jetson's power. Wait for it to boot. Touch nothing.
 
 ```bash
-ssh rune 'curl -s http://127.0.0.1:8000/@/local/router | jq ".[0].value.sessions | length"'
+ssh rune 'sudo lsof -nP -iTCP:7447 -sTCP:ESTABLISHED'
 ```
 
-**Pass:** the session count returns to its pre-cycle value within two minutes,
-with no manual step.
+**Pass:** the Jetson's row comes back within two minutes, with no manual step,
+and the row count returns to what it was before the cycle. Same reading as 2.3,
+and for the same reason: no flag on zenohd, no configuration change.
 
 ### 7.2 The recorders survive a workstation reboot
 
