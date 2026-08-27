@@ -70,7 +70,13 @@ install_linux() {
   fm_apt_add_zenoh_repo run
   # Pinned exactly: an unpinned upgrade would drift this rig away from the router
   # and silently drop it off the fleet on a routine apt upgrade.
-  run sudo apt-get install -y "zenoh-bridge-ros2dds=$version"
+  # --allow-downgrades: a pin means THIS version, whatever is there now — a host
+  # that drifted up (fm-rec-01 reached 1.10.0 under an active hold) must come
+  # back without a human untangling apt.
+  # --allow-change-held-packages: the hold below is this installer's own; apt
+  # must be allowed to move THROUGH it when the pin itself changes.
+  run sudo apt-get install -y --allow-downgrades --allow-change-held-packages \
+    "zenoh-bridge-ros2dds=$version"
   # The pin above only chooses what to install; a later `apt upgrade` — fm-setup's
   # own system-update step included — would move it to whatever the Eclipse repo
   # serves next (1.10.0 landed on fm-ws-01 that way, #21). Hold it so the version

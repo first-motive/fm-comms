@@ -61,7 +61,8 @@ install_linux() {
   fm_apt_add_zenoh_repo run
   # Pinned exactly: an unpinned upgrade would drift this router away from the
   # bridges and silently break the fleet on a routine apt upgrade.
-  run sudo apt-get install -y "zenoh=$version"
+  run sudo apt-get install -y --allow-downgrades --allow-change-held-packages \
+    "zenoh=$version"
   # Held for the same reason the bridge is (#21): the pin picks the version once,
   # the hold keeps a routine `apt upgrade` from moving the router off the fleet.
   run sudo apt-mark hold zenoh
