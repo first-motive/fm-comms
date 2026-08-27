@@ -51,6 +51,10 @@ LOG_DIR="$FM_COMMS_USER_LOG_DIR"
 UNIT=fm-zenoh-bridge.service
 AGENT_PLIST="$HOME/Library/LaunchAgents/$FM_LAUNCHD_BRIDGE_LABEL.plist"
 
+# Set by render_config: 1 when the config just rendered differs from the one
+# already installed. The service step reads it to choose how loudly to restart.
+FM_RENDER_CHANGED=0
+
 run() {
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would run: $*"
@@ -104,13 +108,18 @@ place_env() {
 # summary.
 render_config() {
   local dest="$1" tmp
-  if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would write $dest:"
-    fm_comms_render bridge -
-    return 0
-  fi
   tmp="$(mktemp)"
   fm_comms_render bridge "$tmp" || { rm -f "$tmp"; return 1; }
+  # Compared before the dry run returns, not after: "would this reinstall change
+  # what the service is running" is the question a dry run is asked, and it can
+  # be answered without writing anything.
+  if fm_file_differs "$tmp" "$dest"; then FM_RENDER_CHANGED=1; else FM_RENDER_CHANGED=0; fi
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write $dest:"
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
   case "$dest" in
     "$CONF_DIR"/*) sudo install -m 0644 "$tmp" "$dest" ;;
     *) install -m 0644 "$tmp" "$dest" ;;
@@ -128,6 +137,24 @@ install_unit_linux() {
   run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "$UNIT"
+
+  # `enable --now` starts a stopped unit and does nothing whatever to a running
+  # one, so a reinstall that rerendered the config left the old process holding
+  # the old allow-list: fm-ws-01 filtered with the `processor` profile for an
+  # hour after its card and the file on disk both said `workstation`
+  # (fm-comms#20, 2026-08-27). The restart below is what makes the installed
+  # config and the running process the same thing.
+  #
+  # `restart` when the render changed, `try-restart` when it did not. Both end
+  # with the service running the file on disk; the split is for the log, so the
+  # line an operator reads says which of the two reinstalls this was.
+  if [ "$FM_RENDER_CHANGED" = "1" ]; then
+    fm_log "  config changed — restarting $UNIT"
+    run sudo systemctl restart "$UNIT"
+  else
+    fm_log "  config unchanged — try-restart $UNIT"
+    run sudo systemctl try-restart "$UNIT"
+  fi
   fm_log "  watch it with: journalctl -u $UNIT -f"
 }
 
@@ -161,6 +188,18 @@ install_agent_macos() {
   # worth stopping the install for.
   run launchctl bootout "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
   run launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
+
+  # The macOS half of the same guarantee. bootout/bootstrap already replaces the
+  # process in the ordinary case, but a bootout that was refused leaves bootstrap
+  # a no-op on an already-loaded job, and the survivor would still be running the
+  # previous config. `kickstart -k` kills and respawns whatever is loaded, so the
+  # process after this line is the one that read the config just rendered.
+  if [ "$FM_RENDER_CHANGED" = "1" ]; then
+    fm_log "  config changed — kickstarting $FM_LAUNCHD_BRIDGE_LABEL"
+  else
+    fm_log "  config unchanged — kickstarting $FM_LAUNCHD_BRIDGE_LABEL to match the file on disk"
+  fi
+  run launchctl kickstart -k "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL"
   fm_log "  watch it with: tail -f $LOG_DIR/zenoh-bridge.log"
 }
 

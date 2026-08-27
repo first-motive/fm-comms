@@ -83,6 +83,18 @@ jobs:
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc  # v6.4.3
       - run: uv run scripts/ci/check-transport.py
 
+  # The other question rendering cannot answer: does a reinstall change what the
+  # running service reads? `systemctl enable --now` is a no-op on a unit that is
+  # already up, which left fm-ws-01 filtering with the profile it had before its
+  # card changed (fm-comms#20). The installer is driven in dry-run mode with a
+  # stubbed uname, so both service paths are graded on one runner.
+  reinstall-restart:
+    name: reinstall restarts the service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - run: ./scripts/ci/test-reinstall-restart.sh
+
   # The one question the check above cannot answer: do a router and a bridge at
   # the pinned version actually form a session? It asserts the router's own
   # session count through its admin space, so a bridge that starts and never

@@ -759,6 +759,18 @@ fm_apt_add_zenoh_repo() {
   sudo apt-get update -qq
 }
 
+# fm_file_differs NEW OLD — true when NEW is not what OLD already holds.
+#
+# A missing OLD counts as different: the first install of a config is a change by
+# any reading. The installers use this to choose between `restart` and
+# `try-restart`, and to name in the log which one they did — an operator reading a
+# reinstall cannot otherwise tell one that swapped the allow-list from one that
+# changed nothing.
+fm_file_differs() {
+  [ -f "$2" ] || return 0
+  ! cmp -s "$1" "$2"
+}
+
 # Render a config template, substituting exactly the FM_* placeholders named in
 # the remaining arguments. Deliberately not envsubst: gettext is not installed by
 # default on macOS, and envsubst would also expand any other $-looking text a

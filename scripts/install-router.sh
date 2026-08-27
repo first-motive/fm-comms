@@ -43,6 +43,9 @@ LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}"
 UNIT=fm-zenohd.service
 PLIST="/Library/LaunchDaemons/$FM_LAUNCHD_LABEL.plist"
 
+# Set where router.json5 is rendered: 1 when it differs from the installed one.
+FM_RENDER_CHANGED=0
+
 run() {
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would run: $*"
@@ -88,6 +91,18 @@ install_unit_linux() {
   run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "$UNIT"
+
+  # Same reason as the bridge's: `enable --now` is a no-op on a unit that is
+  # already running, so without this a reinstall would leave zenohd bound to the
+  # endpoints its previous config named. verify_listeners downstream checks the
+  # sockets, not the config, and would pass on the stale process.
+  if [ "$FM_RENDER_CHANGED" = "1" ]; then
+    fm_log "  config changed — restarting $UNIT"
+    run sudo systemctl restart "$UNIT"
+  else
+    fm_log "  config unchanged — try-restart $UNIT"
+    run sudo systemctl try-restart "$UNIT"
+  fi
   fm_log "  watch it with: journalctl -u $UNIT -f"
 }
 
@@ -113,6 +128,11 @@ install_daemon_macos() {
 
   # An existing job holds the port, so it is taken out first. It may legitimately
   # not be loaded, which is not a failure worth stopping the install for.
+  #
+  # This pair is also the router's restart: bootout ends the running daemon and
+  # bootstrap starts one that reads the config rendered above, so a reinstall on
+  # this path never leaves the old process behind the way a bare
+  # `systemctl enable --now` does.
   run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
   run sudo launchctl bootstrap system "$PLIST"
   fm_log "  watch it with: tail -f $LOG_DIR/zenohd.log"
@@ -233,6 +253,11 @@ do_install() {
   else
     local tmp; tmp="$(mktemp)"
     fm_comms_render router "$tmp"
+    if fm_file_differs "$tmp" "$CONF_DIR/router.json5"; then
+      FM_RENDER_CHANGED=1
+    else
+      FM_RENDER_CHANGED=0
+    fi
     sudo install -m 0644 "$tmp" "$CONF_DIR/router.json5"
     rm -f "$tmp"
   fi

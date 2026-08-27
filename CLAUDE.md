@@ -77,13 +77,18 @@ queryable — carries a real suite:
 shellcheck $(find . -name '*.sh' -not -path './.git/*')
 uv run --project episodes pytest -q
 uv run scripts/ci/check-transport.py     # renders + invariants, no network
+./scripts/ci/test-reinstall-restart.sh   # a reinstall restarts the service, no network
 ./scripts/ci/smoke-transport.sh          # bridge <-> router session, needs docker
 ```
 
 `check-transport.py` is the one that grades the configs: it renders every
 template against a fixture card, then compiles the allow rules and matches them
 against real topic names, so a rule that would admit a raw frame or an inbound
-trajectory fails the pull request. `smoke-transport.sh` answers what rendering
+trajectory fails the pull request. `test-reinstall-restart.sh` grades the other
+half of an install — the running process, not the file it wrote. It drives the
+bridge installer in dry-run mode with a stubbed `uname`, so both service paths
+are exercised on one host, and fails when a reinstall with a changed profile
+would leave the old process in place. `smoke-transport.sh` answers what rendering
 cannot — whether a bridge and a router at the pinned version form a session —
 by asserting the router's own session count through its admin space.
 
