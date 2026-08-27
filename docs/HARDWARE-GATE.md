@@ -250,14 +250,23 @@ recorded in the pull request rather than waved through.
 **Fail:** any gap over 0.5 s. A rate that averages well while stalling for half a
 second is a teleop link that drops commands.
 
-### 3.4 The Jetson sees it
+### 3.4 The Jetson sees nothing it did not ask for
+
+A rig's bridge subscribes to its own command topics and nothing else — no
+profile lets one rig read another rig's state, and that is the design, not a
+gap (fm-comms#22, decided 2026-08-27: the Mac is the fleet's one observer; a
+recorder has no business consuming the workstation's joints). So the line
+inverts: on the Jetson, under the rig's own loopback profile, the fleet must
+be absent.
 
 ```bash
-fm device ssh fm-rec-01 -- 'ros2 topic hz /fm_ws_01/joint_states'
+fm device ssh fm-rec-01 -- \
+  'source ~/fm/fm_ros2/scripts/env/comms.sh; ros2 topic list | grep -c "^/fm_ws_01/"'
 ```
 
-**Pass:** between 45 and 50 Hz — the same cap as 3.2, applied at the
-workstation's bridge, so every subscriber on the fabric sees it.
+**Pass:** `0`. Deny-by-default holds between rigs.
+**Fail:** any `/fm_ws_01/*` on the rig — a profile grew an inbound rule nobody
+decided on.
 
 ### 3.5 The sim-first loop runs on zenoh, on one host
 
