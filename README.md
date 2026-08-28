@@ -168,13 +168,32 @@ recordings directory to sync:
 ```
 fm/episodes/index          every indexed episode, newest-first     JSON
 fm/episodes/<id>/meta      one episode's index record              JSON
+fm/episodes/<id>/sidecar   that episode's .episode.json            JSON
 fm/episodes/<id>/mcap      that episode's MCAP bytes               octet-stream
 ```
+
+The sidecar is served because it is what makes a fetched episode processable: the
+index record is derived and carries only what a listing view needs, while the
+`.episode.json` beside each bag is what the data engine reads.
 
 ```bash
 ./run.sh episodes install     # enable the service
 ./run.sh episodes run         # or serve in the foreground
 ```
+
+The pull half runs on the machine that wants the episodes:
+
+```bash
+cd episodes && uv sync
+uv run episodes-fetch                 # fetch every episode this host is missing
+uv run episodes-fetch --limit 1       # or just the newest one
+```
+
+It compares the two indexes, pulls what is absent, and writes each episode's
+sidecar and MCAP before appending its index line — so a supervisor reading the
+index never sees a row whose bag is half-written. `fm dataset process` in fm-ros2
+calls this before it processes, which is how a recorder's takes reach a processor
+on another network without a relay through anyone's laptop.
 
 It serves `<workspace>/recordings` from the identity card, so a rig says where its
 bags are once rather than in a unit file, an env file, and a developer's shell.

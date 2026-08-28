@@ -10,6 +10,7 @@ from episodes.store import (
     find_record,
     read_index,
     resolve_mcap,
+    resolve_sidecar,
     valid_episode_id,
 )
 
@@ -125,7 +126,7 @@ def test_resolve_mcap_refuses_a_path_outside_the_root(tmp_path):
     root = tmp_path / "recordings"
     root.mkdir()
     write_index(root, [record("fm__e1", str(outside))])
-    with pytest.raises(EpisodeError, match="no mcap found"):
+    with pytest.raises(EpisodeError, match="no bag directory found"):
         resolve_mcap(root, "fm__e1")
 
 
@@ -136,7 +137,7 @@ def test_resolve_mcap_refuses_a_traversing_relative_path(tmp_path):
     root = tmp_path / "recordings"
     root.mkdir()
     write_index(root, [record("fm__e1", "../outside")])
-    with pytest.raises(EpisodeError, match="no mcap found"):
+    with pytest.raises(EpisodeError, match="no bag directory found"):
         resolve_mcap(root, "fm__e1")
 
 
@@ -152,3 +153,34 @@ def test_resolve_mcap_takes_the_first_part_by_name(tmp_path):
     (directory / "take_1.mcap").write_bytes(b"second")
     write_index(tmp_path, [record("fm__e1", "e1")])
     assert resolve_mcap(tmp_path, "fm__e1").name == "take_0.mcap"
+
+
+def sidecar(root, name, body=b'{"episode_id": "fm__e1"}'):
+    """The recorder writes the sidecar BESIDE the bag dir, not inside it."""
+    path = root / (name + ".episode.json")
+    path.write_bytes(body)
+    return path
+
+
+def test_resolve_sidecar_finds_the_file_beside_the_bag(tmp_path):
+    bag(tmp_path, "e1")
+    written = sidecar(tmp_path, "e1")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+    assert resolve_sidecar(tmp_path, "fm__e1") == written
+
+
+def test_resolve_sidecar_reports_an_episode_recorded_without_one(tmp_path):
+    bag(tmp_path, "e1")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+    with pytest.raises(EpisodeError, match="no sidecar found"):
+        resolve_sidecar(tmp_path, "fm__e1")
+
+
+def test_resolve_sidecar_refuses_a_path_outside_the_root(tmp_path):
+    outside = tmp_path.parent / "outside-sidecar"
+    outside.mkdir(exist_ok=True)
+    root = tmp_path / "recordings"
+    root.mkdir()
+    write_index(root, [record("fm__e1", str(outside))])
+    with pytest.raises(EpisodeError, match="no bag directory found"):
+        resolve_sidecar(root, "fm__e1")

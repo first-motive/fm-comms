@@ -156,8 +156,9 @@ E=tcp/<rune>.<tailnet>.ts.net:7447
 # The index: every recorded episode, newest first.
 z_get -e "$E" -s 'fm/episodes/index'
 
-# One episode's metadata.
+# One episode's metadata, and the sidecar the data engine reads.
 z_get -e "$E" -s 'fm/episodes/<episode-id>/meta'
+z_get -e "$E" -s 'fm/episodes/<episode-id>/sidecar' > episode.episode.json
 
 # The MCAP itself. Large — see the size limit below.
 z_get -e "$E" -s 'fm/episodes/<episode-id>/mcap' > episode.mcap

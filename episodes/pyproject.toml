@@ -19,6 +19,9 @@ dependencies = [
 
 [project.scripts]
 episodes = "episodes.service:main"
+# The pull half, run on a processor: fetch what this host is missing from a
+# recorder's queryable.
+episodes-fetch = "episodes.fetch:main"
 
 [dependency-groups]
 dev = [

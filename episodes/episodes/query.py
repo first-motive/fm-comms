@@ -7,6 +7,7 @@ nothing but carry bytes between Zenoh and this.
 
     fm/episodes/index          the whole index, newest-first     JSON
     fm/episodes/<id>/meta      one episode's index record        JSON
+    fm/episodes/<id>/sidecar   that episode's .episode.json      JSON
     fm/episodes/<id>/mcap      that episode's MCAP bytes         octet-stream
 """
 
@@ -21,6 +22,7 @@ from episodes.store import (
     find_record,
     read_index,
     resolve_mcap,
+    resolve_sidecar,
     valid_episode_id,
 )
 
@@ -86,12 +88,14 @@ def answer(
         except OSError as exc:
             return _error(key, f"could not read the index: {exc}")
 
-    if len(rest) == 2 and rest[1] in {"meta", "mcap"}:
+    if len(rest) == 2 and rest[1] in {"meta", "sidecar", "mcap"}:
         episode_id, what = rest
         if not valid_episode_id(episode_id):
             return _error(key, f"malformed episode id: {episode_id!r}")
         if what == "meta":
             return _meta(key, recordings_dir, episode_id)
+        if what == "sidecar":
+            return _sidecar(key, recordings_dir, episode_id)
         return _mcap(key, recordings_dir, episode_id, max_mcap_bytes)
 
     return _error(key, f"no such episode resource: {key}")
@@ -104,6 +108,25 @@ def _meta(key: str, recordings_dir: str | Path, episode_id: str) -> Reply:
         return _error(key, str(exc))
     except OSError as exc:
         return _error(key, f"could not read the index: {exc}")
+
+
+def _sidecar(key: str, recordings_dir: str | Path, episode_id: str) -> Reply:
+    try:
+        path = resolve_sidecar(recordings_dir, episode_id)
+    except EpisodeError as exc:
+        return _error(key, str(exc))
+    except OSError as exc:
+        return _error(key, f"could not resolve the sidecar: {exc}")
+
+    # Returned as the recorder's own bytes rather than re-serialised JSON: the
+    # sidecar is the authoritative record, and a caller writing it to disk must
+    # end up with the file the rig has, byte for byte.
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        return _error(key, f"could not read the sidecar: {exc}")
+
+    return Reply(key=key, payload=payload, encoding="application/json")
 
 
 def _mcap(
