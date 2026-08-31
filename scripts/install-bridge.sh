@@ -250,17 +250,6 @@ install_agent_macos() {
   # An existing job holds the DDS participant and the router session, so it is
   # taken out first. It may legitimately not be loaded, which is not a failure
   # worth stopping the install for.
-  # Everything past the render mutates this machine: it installs an agent into the
-  # user's LaunchAgents and restarts the running bridge. FM_DRY_RUN promises none
-  # of that happens, and only the render honoured it — so a dry run rewrote a live
-  # config and kickstarted the bridge onto it (found 2026-08-31, twice, on the Mac
-  # whose fleet visibility it removed). Stop here instead.
-  if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would install $AGENT_PLIST"
-    fm_log "  would (re)load $FM_LAUNCHD_BRIDGE_LABEL in gui/$FM_AGENT_UID"
-    return 0
-  fi
-
   # Written by root when the installer was elevated, and launchd will not load an
   # agent out of a user's LaunchAgents that the user does not own. Hand it back
   # along with the rendered config and the log directory beside it.
