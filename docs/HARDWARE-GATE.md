@@ -209,7 +209,22 @@ before the bridge. What crosses Zenoh is capped lower — see 3.2.
 ros2 topic hz /fm_ws_01/joint_states
 ```
 
-**Pass:** between 45 and 50 Hz, jitter under 1 ms.
+**Pass:** between 45 and 50 Hz, and jitter (the `std dev` line) under 5 ms.
+
+**Where 5 ms comes from.** The figure this line carried first was 1 ms, and no
+measurement was ever recorded next to it. The fleet has never met it and probably
+never could: wired, on Ethernet, with the office LAN listener reachable, the Mac
+reads
+
+```
+average rate: 47.505   min: 0.000s max: 0.093s std dev: 0.00339s   window: 1538
+```
+
+3.4 ms, against 18.9 ms on Wi-Fi — so the wire is worth 5.6x, which is the real
+thing this line should be protecting. A bar the hardware cannot reach turns a
+green run into a judgement call every time, so it is set from what a healthy
+fleet actually does, with headroom. Lower it when a reading justifies it, and
+record the reading here when you do.
 
 **Not 100 Hz, by design.** The `workstation` profile sets
 `pub_max_frequencies /joint_states=50`, inherited from `bridge-robot.json5` —
@@ -334,8 +349,31 @@ fm device ssh fm-ws-01 -- 'fm dataset process'
 fm device ssh fm-ws-01 -- 'fm dataset verify'
 ```
 
-**Pass:** `verify` reports at least one episode. A manifest describing zero
-episodes is a fail — that is a loop that ran and processed nothing.
+**Pass:** the episode the Jetson recorded reaches the workstation and INGESTS —
+the manifest names it, with its real size and duration read from the bag.
+
+```
+{"bag_size_bytes": 105731629, "duration_s": 11.669821, ...}
+```
+
+**Not** "at least one usable episode", which this line asked for until 2026-08-31
+and which a recorder rig cannot currently produce. The engine grades an episode
+against a frame clock, and its ingest decodes robot state, not the streams an
+egocentric human capture carries: `sensor_msgs/msg/Imu` and `CompressedImage`
+both land in `ignored_topics`, so `decoded_topics` comes back empty and every
+choice of `ingest.frame_clock_topic` reads `frame_count: 0` — including
+`/head/imu`, which the bag carries 2358 messages of. No profile override reaches
+it; the engine has to learn those types (fm-data).
+
+That is a data-engine gap, not a transport one, so it does not belong in this
+gate. What this line is for — an episode crossing from the recorder to the
+processor and being read — is what it now checks.
+
+Grading a human-capture episode returns here when the engine supports it; IMU
+transforms on the rig are the intended path.
+
+**Fail:** the episode never arrives, or arrives and cannot be read (an incomplete
+bag, a missing `metadata.yaml`).
 
 ### 4.3 MCAP bytes did not travel as topics
 
