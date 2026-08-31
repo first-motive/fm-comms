@@ -10,11 +10,11 @@
 #
 # Install (the URL is pinned to a release tag, never a moving branch):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.5/install.sh | bash -s -- --role router
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0/install.sh | bash -s -- --role router
 #
 # Inspect before running (always available):
 #
-#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0-zenoh.5/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/first-motive/fm-comms/v0.2.0/install.sh -o install.sh
 #   less install.sh && bash install.sh --role router --dry-run
 #
 # Env overrides:
@@ -35,7 +35,7 @@
 set -euo pipefail
 
 FM_REPO="${FM_REPO:-first-motive/fm-comms}"
-FM_TAG="${FM_TAG:-v0.2.0-zenoh.5}"
+FM_TAG="${FM_TAG:-v0.2.0}"
 FM_RAW_BASE="https://raw.githubusercontent.com/${FM_REPO}/${FM_TAG}"
 
 FM_COMMS_ROLE="${FM_COMMS_ROLE:-}"
