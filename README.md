@@ -169,8 +169,15 @@ recordings directory to sync:
 fm/episodes/index          every indexed episode, newest-first     JSON
 fm/episodes/<id>/meta      one episode's index record              JSON
 fm/episodes/<id>/sidecar   that episode's .episode.json            JSON
+fm/episodes/<id>/files     the bag directory's file names          JSON
+fm/episodes/<id>/file/<n>  one of those files, verbatim            octet-stream
 fm/episodes/<id>/mcap      that episode's MCAP bytes               octet-stream
 ```
+
+A bag is a directory, not a file: rosbag2 writes `<name>_0.mcap` next to a
+`metadata.yaml` that names it, and the data engine drops a directory carrying one
+without the other. `files` and `file/<name>` are what let a puller rebuild the bag
+under the recorder's own names.
 
 The sidecar is served because it is what makes a fetched episode processable: the
 index record is derived and carries only what a listing view needs, while the

@@ -11,11 +11,16 @@ through an operator's laptop (fm-ros2#146). The queryable already served exactly
 what a pull needs, over the transport the fleet had just adopted, and nothing
 called it.
 
-One episode lands as three things, in this order:
+One episode lands as its whole bag, in this order:
 
     <root>/<bag>.episode.json   the recorder's authoritative sidecar
-    <root>/<bag>/*.mcap         the recording itself
+    <root>/<bag>/               every file the recorder wrote, under its own name
     <root>/sessions.jsonl       one appended index line
+
+Every file, not just the MCAP: rosbag2 writes ``<name>_0.mcap`` alongside a
+``metadata.yaml`` that names it, and the engine drops a directory holding one
+without the other ("incomplete bag: metadata.yaml is missing"). Fetching only the
+recording, under a name of our own choosing, produced exactly that (gate 4.2).
 
 The index line goes last, and only after the bytes are on disk, so a supervisor
 reading the index never sees a row whose episode is half-written — the same
@@ -43,11 +48,10 @@ class FetchError(Exception):
 
 @dataclass(frozen=True)
 class Landing:
-    """Where one fetched episode's three artifacts go."""
+    """Where one fetched episode's artifacts go."""
 
     bag_dir: Path
     sidecar: Path
-    mcap: Path
 
 
 def missing_episode_ids(
@@ -95,27 +99,26 @@ def landing(recordings_dir: str | Path, record: dict[str, Any]) -> Landing:
     if bag_dir.parent != root:
         raise FetchError(f"episode {record.get('episode_id')} would land outside {root}")
 
-    return Landing(
-        bag_dir=bag_dir,
-        sidecar=root / (name + SIDECAR_SUFFIX),
-        mcap=bag_dir / f"{name}.mcap",
-    )
+    return Landing(bag_dir=bag_dir, sidecar=root / (name + SIDECAR_SUFFIX))
 
 
-def write_episode(place: Landing, sidecar: bytes, mcap: bytes) -> None:
+def write_episode(
+    place: Landing, sidecar: bytes, files: dict[str, bytes]
+) -> None:
     """Put one episode's bytes on disk, nothing appended to the index.
 
     Each file is written beside its target and renamed into place, so a pull that
     dies midway leaves no truncated artifact for the engine to read as a real one.
 
-    The MCAP lands before the sidecar deliberately: it is the large one and the one
-    a pull is likely to die during, so a sidecar on disk means its recording is
-    already there. The index line, appended by the caller, is still the only signal
-    that an episode is complete.
+    The bag lands before the sidecar deliberately: the bag is the large part and the
+    one a pull is likely to die during, so a sidecar on disk means its recording is
+    already beside it. The index line, appended by the caller, remains the only
+    signal that an episode is complete.
     """
 
     place.bag_dir.mkdir(parents=True, exist_ok=True)
-    _atomic_write(place.mcap, mcap)
+    for name, payload in sorted(files.items()):
+        _atomic_write(place.bag_dir / name, payload)
     _atomic_write(place.sidecar, sidecar)
 
 
@@ -171,8 +174,11 @@ def pull(session, recordings: Path, limit: int) -> int:
         try:
             place = landing(recordings, record)
             sidecar = _get(session, _key(episode_id, "sidecar"))
-            mcap = _get(session, _key(episode_id, "mcap"))
-            write_episode(place, sidecar, mcap)
+            names = json.loads(_get(session, _key(episode_id, "files")).decode("utf-8"))
+            files = {
+                name: _get(session, _key(episode_id, "file", name)) for name in names
+            }
+            write_episode(place, sidecar, files)
             append_index_line(recordings, record)
         except (FetchError, OSError) as exc:
             # One unfetchable episode must not strand the rest: an oversized MCAP

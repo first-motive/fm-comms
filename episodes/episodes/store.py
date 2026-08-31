@@ -137,6 +137,39 @@ def resolve_mcap(recordings_dir: str | Path, episode_id: str) -> Path:
     return parts[0]
 
 
+# A bag directory is not one file. rosbag2 writes the recording as
+# ``<name>_0.mcap`` alongside a ``metadata.yaml`` that names it, and the engine
+# refuses a directory carrying one without the other ("incomplete bag:
+# metadata.yaml is missing"). Serving only the MCAP, under a name of the client's
+# own invention, produced exactly that (gate 4.2).
+def list_bag_files(recordings_dir: str | Path, episode_id: str) -> list[str]:
+    """Every file in one episode's bag directory, by name, sorted.
+
+    Names only: the caller reconstructs the directory on its own side, and a path
+    would let this decide where the other machine writes.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    return sorted(p.name for p in directory.iterdir() if p.is_file())
+
+
+def resolve_bag_file(
+    recordings_dir: str | Path, episode_id: str, name: str
+) -> Path:
+    """One named file inside an episode's bag directory.
+
+    ``name`` arrives from the network, so it is matched against what the directory
+    actually holds rather than joined onto it — a join would accept ``../`` and a
+    check after the fact is one refactor away from being dropped.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    for candidate in directory.iterdir():
+        if candidate.is_file() and candidate.name == name:
+            return candidate
+    raise EpisodeError(f"episode {episode_id} has no file {name!r}")
+
+
 def resolve_sidecar(recordings_dir: str | Path, episode_id: str) -> Path:
     """The ``<bag>.episode.json`` sidecar for one episode.
 

@@ -37,7 +37,6 @@ def test_landing_keeps_only_the_last_segment_of_a_remote_path(tmp_path):
     place = landing(tmp_path, record("fm__e1", "/home/fm/recordings/e1"))
     assert place.bag_dir == tmp_path.resolve() / "e1"
     assert place.sidecar == tmp_path.resolve() / "e1.episode.json"
-    assert place.mcap.parent == place.bag_dir
 
 
 def test_landing_refuses_a_traversing_remote_path(tmp_path):
@@ -50,13 +49,28 @@ def test_landing_refuses_a_record_with_no_path(tmp_path):
         landing(tmp_path, {"episode_id": "fm__e1"})
 
 
-def test_write_episode_lands_both_artifacts_and_no_partials(tmp_path):
+def test_write_episode_lands_the_whole_bag_and_no_partials(tmp_path):
     place = landing(tmp_path, record("fm__e1", "e1"))
-    write_episode(place, b'{"episode_id": "fm__e1"}', b"\x89MCAP0\r\n")
+    # A bag is a directory: rosbag2's own file names, metadata.yaml included. The
+    # engine drops a directory carrying the recording without its metadata.
+    write_episode(
+        place,
+        b'{"episode_id": "fm__e1"}',
+        {"e1_0.mcap": b"\x89MCAP0\r\n", "metadata.yaml": b"rosbag2_bagfile_information:\n"},
+    )
 
-    assert place.mcap.read_bytes() == b"\x89MCAP0\r\n"
+    assert (place.bag_dir / "e1_0.mcap").read_bytes() == b"\x89MCAP0\r\n"
+    assert (place.bag_dir / "metadata.yaml").exists()
     assert json.loads(place.sidecar.read_text())["episode_id"] == "fm__e1"
     assert not list(tmp_path.glob("**/*.partial"))
+
+
+def test_the_recorder_s_own_file_names_are_preserved(tmp_path):
+    # metadata.yaml names the MCAP beside it, so a file renamed in transit leaves a
+    # bag that describes a recording it does not contain.
+    place = landing(tmp_path, record("fm__e1", "e1"))
+    write_episode(place, b"{}", {"e1_0.mcap": b"x", "metadata.yaml": b"y"})
+    assert sorted(p.name for p in place.bag_dir.iterdir()) == ["e1_0.mcap", "metadata.yaml"]
 
 
 def test_the_index_line_points_at_the_local_bag(tmp_path):
