@@ -76,3 +76,10 @@ def test_a_fetched_episode_is_not_fetched_again(tmp_path):
     append_index_line(tmp_path, remote[0])
 
     assert missing_episode_ids(read_index(tmp_path), remote) == []
+
+
+def test_a_duplicated_remote_row_is_fetched_once():
+    # The recorder's index is append-only and has been seen to carry one episode
+    # twice; fetching it twice moves the whole MCAP across the fabric for nothing.
+    remote = [record("fm__e1", "e1"), record("fm__e1", "e1")]
+    assert missing_episode_ids([], remote) == ["fm__e1"]

@@ -66,6 +66,10 @@ def missing_episode_ids(
         episode_id = record.get("episode_id")
         if episode_id and episode_id not in have and valid_episode_id(episode_id):
             out.append(episode_id)
+            # The remote index can carry an id twice — a recorder that finalized an
+            # episode more than once leaves two rows, and both were fetched, moving
+            # 100 MB across the fabric for nothing (gate 4.2). One pull per id.
+            have.add(episode_id)
     return out
 
 
