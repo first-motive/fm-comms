@@ -4,10 +4,17 @@ The card is the one file that says what a machine is — its name, its role, its
 fleet, its transport, and the workspace every First Motive checkout lives under.
 ``fm machine init`` in fm-setup writes it; nothing here ever does.
 
-The queryable reads it for one value: where the recordings are. That directory is
-``recordings`` under the workspace, so a rig that keeps its bags on a mounted
-volume says so once, on the card, instead of in this service's unit and its
-foreground invocation and whatever a developer typed that afternoon.
+The queryable reads it for one thing: confirming this machine is a First Motive
+rig at all. Where the recordings sit is NOT on the card — every other component
+(the recorder's own default, the processor's bind mounts, ``fm episode``,
+``recordings-sync``) uses ``~/recordings``, and this module derived
+``<workspace>/recordings`` instead. On a real rig the card's ``workspace`` names
+where the checkouts live (``/home/fm/fm``), so the queryable looked in
+``/home/fm/fm/recordings``, a directory that has never existed, and the service
+died at start with the bags sitting in ``/home/fm/recordings`` (gate 4.2).
+
+``FM_EPISODES_DIR`` remains the way a rig that keeps its bags on a mounted volume
+says so.
 
 Two rules that look like caution and are not. A card stamped with a schema version
 this code does not know is refused rather than read, because a field that changed
@@ -71,11 +78,13 @@ def read_card(path: Path | None = None) -> dict | None:
 
 
 def recordings_dir(path: Path | None = None) -> Path | None:
-    """Where this machine's recordings sit, or ``None`` when it has no card."""
+    """Where this machine's recordings sit, or ``None`` when it has no card.
+
+    ``~/recordings`` — the same location the recorder writes to and the processor
+    mounts. The card is still read, so a machine that is not a rig (no card) gets
+    ``None`` and the caller falls back to what it was told directly.
+    """
     card = read_card(path)
     if card is None:
         return None
-    workspace = card.get("workspace")
-    if not workspace:
-        raise MachineCardError("the machine identity card carries no workspace")
-    return Path(workspace) / "recordings"
+    return Path.home() / "recordings"
