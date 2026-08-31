@@ -20,9 +20,30 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
 
 ## Boundaries
 
-- **No ROS packages, no application code.** This repo is configuration and the
-  scripts that deploy it. A node that happens to speak Zenoh belongs in the
-  package repo that owns its behaviour, not here.
+- **No ROS packages, no application code, with one named exception.** This repo
+  is configuration and the scripts that deploy it. A node that happens to speak
+  Zenoh belongs in the package repo that owns its behaviour, not here.
+  `episodes/` is the exception, and it is one on purpose: the episode queryable
+  implements a transport surface, not a behaviour. It answers queries on
+  `fm/episodes/**`, and it exists precisely because MCAP bytes must not be
+  streamed as topics across the fabric — so the queryable and the allowlists
+  that keep those bytes off the wire are one decision, and splitting them across
+  two repos would leave half a wire contract in each. Nothing else earns that
+  exception.
+- **The router lives on Rune, on the host.** Rune is the always-on office Mac
+  mini; on macOS the router is a launchd LaunchDaemon. Never the GPU
+  workstation, which is wiped and rebooted. Never
+  inside Rune's CI guest, which is ephemeral and network isolated —
+  `install-router.sh` refuses to install in a VM for that reason.
+- **The router binds exactly two sockets: the LAN and the tailnet.** Neither
+  address is written down — both are read off the host at render time, the LAN
+  one by interface (`FM_ROUTER_LAN_IF`, else the default route) because Rune has
+  three. A wildcard bind is refused everywhere it could appear: the installer's
+  own check, and `check-transport.py` on every pull request.
+- **A bridge is per-OS, not per-rig.** `install.sh --role bridge` places a
+  systemd unit on Linux and a user LaunchAgent on macOS. The Mac's profile is
+  `cockpit` and it is the mirror of a rig's: the fleet's published set in, teleop
+  commands out, and no namespace, because the rigs already prefixed their keys.
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.
@@ -55,7 +76,21 @@ queryable — carries a real suite:
 ```bash
 shellcheck $(find . -name '*.sh' -not -path './.git/*')
 uv run --project episodes pytest -q
+uv run scripts/ci/check-transport.py     # renders + invariants, no network
+./scripts/ci/test-reinstall-restart.sh   # a reinstall restarts the service, no network
+./scripts/ci/smoke-transport.sh          # bridge <-> router session, needs docker
 ```
+
+`check-transport.py` is the one that grades the configs: it renders every
+template against a fixture card, then compiles the allow rules and matches them
+against real topic names, so a rule that would admit a raw frame or an inbound
+trajectory fails the pull request. `test-reinstall-restart.sh` grades the other
+half of an install — the running process, not the file it wrote. It drives the
+bridge installer in dry-run mode with a stubbed `uname`, so both service paths
+are exercised on one host, and fails when a reinstall with a changed profile
+would leave the old process in place. `smoke-transport.sh` answers what rendering
+cannot — whether a bridge and a router at the pinned version form a session —
+by asserting the router's own session count through its admin space.
 
 The queryable's logic lives in `episodes/episodes/store.py`, `query.py`, and
 `machine.py`, which import no Zenoh at all; `service.py` is the only module that
@@ -78,4 +113,9 @@ FM_MACHINE_FILE=/tmp/machine.json FM_COMMS_ENV_FILE=/tmp/fm-comms.env \
   is what `install.sh --role <role>` dispatches to, so a new role is one new file
 - `zenoh/` — config templates plus `zenoh.version`, the single version pin
 - `systemd/` — the two units and the `fm-comms.env` example they read
+- `launchd/` — the macOS job templates: the router's LaunchDaemon, the cockpit
+  bridge's user LaunchAgent
+- `scripts/ci/` — the checks CI runs; not run.sh verbs, so they live one level down
+- `docs/diagrams/` — `transport.d2` and its rendered sidecar; re-render with
+  `./render.sh`, and commit both
 - `deploy/` — the compose overlay, for hosts that run the stack in containers

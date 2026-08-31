@@ -1,0 +1,107 @@
+/// zenoh-bridge-ros2dds on the WORKSTATION — the GPU tower that runs the sim
+/// stack and the dataset engine at the same time.
+///
+/// This profile is the union of `bridge-robot.json5` and
+/// `bridge-processor.json5`, because the workstation is both of those machines
+/// at once: it publishes the joint states and TF the cockpit renders, it takes
+/// the same Servo jog commands a rig takes, and it runs the processor's
+/// supervisor beside them. Under the `processor` profile alone its sim published
+/// nothing the gate reads — the bridge held a session and carried no state
+/// (fm-comms#20).
+///
+/// The union is deliberate and stays a union: a rule that belongs on a rig
+/// belongs here in the same words, so a change to what a robot exports is made
+/// once in bridge-robot.json5 and copied here rather than re-invented. What must
+/// NOT cross is unchanged from both parents — no inbound `joint_trajectory`, no
+/// camera frames — and scripts/ci/check-transport.py grades this profile against
+/// the same topic names it grades the other two against.
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
+/// result to /etc/fm-comms/bridge.json5. Committed files carry placeholders only —
+/// never a real address. Read the render before installing it:
+///
+///     ./run.sh render bridge
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<rune>:7447. Fleet-wide, from
+///                         /etc/fm-comms.env.
+///   FM_RIG_NAMESPACE      this machine's ROS namespace. Derived from the machine
+///                         identity card's name and typed nowhere: fm-ws-01
+///                         becomes fm_ws_01, because a ROS name may not carry
+///                         a hyphen.
+///   FM_ROS_DOMAIN_ID      the DDS domain this machine's nodes run on. Fleet-wide,
+///                         from /etc/fm-comms.env.
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      namespace: "/${FM_RIG_NAMESPACE}",
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      /// Allowlist, and ONLY an allowlist. zenoh-plugin-ros2dds flattens allow
+      /// and deny into a single untagged choice, so a config carrying both is
+      /// refused at startup as "unknown field `deny`" — which reads as a typo
+      /// and is not one.
+      ///
+      /// The rule enforced by absence is the robot's, and it holds here for the
+      /// same reason: no inbound pattern matches `<controller>/joint_trajectory`.
+      /// The sim's controllers take that topic directly, bypassing Servo's limits
+      /// and collision checking, and the sim is what a policy is validated
+      /// against before it reaches an arm.
+      allow: {
+        publishers: [
+          /// State the cockpit renders: where the arm is, what it looks like.
+          "^/joint_states$",
+          "^/robot_description$",
+          "^/tf$",
+          "^/tf_static$",
+          "^/rosout$",
+          /// Servo's own status, so the operator sees why a jog was refused.
+          "^/servo_node.*/status$",
+          /// Run state, the job index, and per-job detail — what the Process
+          /// surface renders.
+          "^/process/.*$",
+        ],
+        subscribers: [
+          /// Jog commands. Servo applies its own limits and collision checks
+          /// here, so a dropped or delayed sample degrades to "stop", not to an
+          /// unbounded motion.
+          "^/servo_node.*/delta_twist_cmds$",
+          "^/servo_node.*/delta_joint_cmds$",
+          "^/target_pose$",
+          /// Gripper open/close presets.
+          "^/gripper_teleop/.*/preset$",
+          /// Base velocity, on the models that have a base.
+          "^/cmd_vel$",
+          /// Commands into the processor: start a run, annotate, provision the
+          /// real model, delete a job.
+          "^/process/.*$",
+        ],
+        service_servers: [
+          /// Switching controllers is how teleop is armed and disarmed.
+          "^/controller_manager/.*$",
+          "^/robot_state_publisher/.*$",
+          "^/servo_node.*/.*$",
+        ],
+      },
+
+      /// TF at full rate is the largest stream the sim produces; the cockpit
+      /// renders well below it. The processor's own topics need no limit — the
+      /// supervisor publishes status on change, not on a timer.
+      pub_max_frequencies: [
+        "/tf=30",
+        "/joint_states=50",
+      ],
+
+      reliable_routes_blocking: false,
+    },
+  },
+}

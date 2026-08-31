@@ -1,0 +1,140 @@
+/// zenoh-bridge-ros2dds on a COCKPIT machine — the Mac a person sits in front
+/// of, running the desktop app, rviz, and the `ros2` CLI against the fleet.
+///
+/// The Mac is not a rig. Under the zenoh profile its DDS graph is loopback-only
+/// (ROS_LOCALHOST_ONLY=1, Cyclone pinned to `lo`), so without this bridge its ROS
+/// nodes see nothing the fleet publishes — the desktop app has its own embedded
+/// Zenoh session and does not need one, but `ros2 topic hz /fm_ws_01/joint_states`
+/// does.
+///
+/// It runs under a user LaunchAgent, not a LaunchDaemon. The router must survive
+/// an unattended reboot with nobody logged in; a laptop's view of the fleet is
+/// only useful while someone is logged in and looking at it.
+///
+/// THE DIRECTION IS INVERTED, AND THAT IS THE WHOLE DESIGN.
+///
+/// A rig's bridge publishes what the rig produces and subscribes to the few
+/// commands it accepts. This one is the mirror: it subscribes to what the fleet
+/// publishes and publishes only teleop commands. `publishers` and `subscribers`
+/// below are still read from the local DDS side — a `publisher` rule routes a
+/// topic the Mac publishes OUT to the fabric, a `subscriber` rule routes a fleet
+/// topic IN to the Mac — so the lists read backwards compared to the rig configs
+/// on purpose.
+///
+/// NO NAMESPACE, also on purpose. A rig's bridge sets `namespace: /fm_rec_01`, so
+/// the rig's local `/joint_states` becomes the key `fm_rec_01/joint_states`. The
+/// Mac must see that key as the topic `/fm_rec_01/joint_states` — already
+/// prefixed, exactly as the hardware gate types it — which is what the default
+/// root namespace gives. Setting one here would nest the fleet's keys under the
+/// Mac's own name and nothing would line up.
+///
+/// Every rule is therefore written against the PREFIXED topic name and matches
+/// `/fm_<rig>/...` rather than `/...`. That prefix is also the containment: the
+/// Mac's own local nodes publish unprefixed topics, and no rule below can match
+/// one, so running a sim on the laptop does not push it onto the fabric.
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
+/// result to ~/.config/fm-comms/bridge.json5. Committed files carry placeholders
+/// only — never a real address. Read the render before installing it:
+///
+///     ./run.sh render bridge
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router. Fleet-wide, from /etc/fm-comms.env — the
+///                         LAN endpoint in the office, the tailnet one off-site.
+///   FM_RIG_NAMESPACE      this machine's ROS namespace, from the identity card.
+///                         Used for the node name only, never as a namespace:
+///                         two cockpits on the fabric must not share a name.
+///   FM_ROS_DOMAIN_ID      the DDS domain this Mac's nodes run on. Fleet-wide,
+///                         from /etc/fm-comms.env.
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      /// Allowlist, and ONLY an allowlist. zenoh-plugin-ros2dds flattens allow
+      /// and deny into a single untagged choice, so a config carrying both is
+      /// refused at startup as "unknown field `deny`" — which reads as a typo and
+      /// is not one. Every pattern is anchored; an unanchored one is a substring
+      /// match, and a substring match is how a rule written for one topic quietly
+      /// admits its neighbours.
+      allow: {
+        publishers: [
+          /// Teleop, and nothing else. This is the only machine on the fabric
+          /// that publishes a command a robot acts on, so the list is exactly the
+          /// inbound set bridge-robot.json5 accepts — anything wider here would
+          /// be a command the robot's own allowlist then has to refuse.
+          ///
+          /// Servo applies its limits and collision checks on the rig, so a
+          /// dropped or delayed sample degrades to "stop", not to unbounded
+          /// motion. `<controller>/joint_trajectory` is absent for the same
+          /// reason it is absent there: it reaches the arm controllers directly,
+          /// and no pattern below can widen into it.
+          "^/fm_[a-z0-9_]+/servo_node.*/delta_twist_cmds$",
+          "^/fm_[a-z0-9_]+/servo_node.*/delta_joint_cmds$",
+          "^/fm_[a-z0-9_]+/target_pose$",
+          "^/fm_[a-z0-9_]+/gripper_teleop/.*/preset$",
+          "^/fm_[a-z0-9_]+/cmd_vel$",
+        ],
+        subscribers: [
+          /// What the fleet publishes, mirrored from the rigs' own publisher
+          /// lists. A topic a rig does not export cannot appear here anyway; the
+          /// point of naming them is that the Mac subscribes to the fleet's
+          /// published set rather than to whatever happens to be on the fabric.
+
+          /// Robot and rig state — where the arm is, what it looks like.
+          "^/fm_[a-z0-9_]+/joint_states$",
+          "^/fm_[a-z0-9_]+/robot_description$",
+          "^/fm_[a-z0-9_]+/tf$",
+          "^/fm_[a-z0-9_]+/tf_static$",
+          "^/fm_[a-z0-9_]+/rosout$",
+          "^/fm_[a-z0-9_]+/servo_node.*/status$",
+
+          /// Cameras: compressed frames and their calibration. The raw variants
+          /// are 20-50x larger and never leave a rig — no rule here can match one,
+          /// and scripts/ci/check-transport.py proves it against real topic names
+          /// on every pull request.
+          "^/fm_[a-z0-9_]+/head/.*/compressed$",
+          "^/fm_[a-z0-9_]+/wrist/.*/compressed$",
+          "^/fm_[a-z0-9_]+/camera/wrist_.*/compressed$",
+          "^/fm_[a-z0-9_]+/head/.*/camera_info$",
+          "^/fm_[a-z0-9_]+/wrist/.*/camera_info$",
+          "^/fm_[a-z0-9_]+/head/imu$",
+
+          /// Hand tracking and capture state the cockpit renders.
+          "^/fm_[a-z0-9_]+/vision/.*$",
+          "^/fm_[a-z0-9_]+/capture/.*$",
+          "^/fm_[a-z0-9_]+/fm_data_record/.*$",
+
+          /// LiDAR, on the rigs that carry one.
+          "^/fm_[a-z0-9_]+/lidar/.*$",
+          "^/fm_[a-z0-9_]+/livox/.*$",
+
+          /// The processor's run state, which the Process surface renders.
+          "^/fm_[a-z0-9_]+/process/.*$",
+        ],
+
+        /// No service_clients and no service_servers. Calling a rig's services
+        /// from the Mac — switching controllers to arm teleop, fetching a URDF —
+        /// is the desktop app's job through its own embedded Zenoh session, which
+        /// is where the operator's intent is already expressed. A ROS service
+        /// client on the Mac would be a second, unattributed path to the same
+        /// controller_manager, so this bridge carries topics only.
+      },
+
+      /// Nothing published from here is high-rate: teleop commands are small and
+      /// the rigs already thin what they send. The inbound side is limited at the
+      /// rig that produces it, which is the only place a limit saves the link.
+      reliable_routes_blocking: false,
+    },
+  },
+}

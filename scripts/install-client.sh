@@ -40,9 +40,8 @@ do_install() {
 
   case "$os" in
     macos)
-      fm_require_cmd brew
-      run brew tap eclipse-zenoh/homebrew-zenoh
-      run brew install zenoh
+      # Pinned standalone build, not the brew tap — see fm_install_zenohd_macos.
+      fm_install_zenohd_macos "$version"
       # Outside pixi on purpose: there is no conda-forge zenoh package, and the
       # ROS env has no business carrying the transport's CLI.
       fm_log "  installed outside the pixi env — these are host tools, not ROS deps"
@@ -68,7 +67,7 @@ do_uninstall() {
   os="$(fm_detect_os)"
   fm_log "Removing the Zenoh CLI tools"
   case "$os" in
-    macos) run brew uninstall zenoh || true ;;
+    macos) run rm -f "$HOME/.local/bin/zenohd" ;;
     linux) run sudo apt-get remove -y zenoh || true ;;
   esac
   fm_ok "client uninstall complete."

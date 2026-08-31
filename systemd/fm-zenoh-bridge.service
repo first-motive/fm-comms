@@ -3,9 +3,22 @@ Description=First Motive Zenoh ROS 2 bridge (zenoh-bridge-ros2dds)
 Documentation=https://github.com/first-motive/fm-comms
 After=network-online.target
 Wants=network-online.target
+# A rig boots before the office router is reachable, and a rig on Wi-Fi loses it
+# again; the bridge must keep retrying forever rather than being rate-limited out.
+# A [Unit] key — systemd ignores it under [Service] (fm-ws-01, 2026-08-26).
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+# The bridge maps DDS types and QoS per ROS distro and assumes `iron` when unset.
+# Every First Motive rig runs Humble, natively or in the container it bridges.
+Environment=ROS_DISTRO=humble
+# The zenoh profile confines the rig's DDS to loopback; the bridge must sit on
+# the same island with the same Cyclone profile — unicast localhost discovery
+# and a raised participant-index ceiling — or it discovers only the first
+# handful of nodes (#23). The macOS LaunchAgent sets both for the same reason.
+Environment=ROS_LOCALHOST_ONLY=1
+Environment=CYCLONEDDS_URI=file:///etc/fm-comms/cyclonedds.xml
 # Carries ROS_DOMAIN_ID as well as the FM_* values: the bridge joins the rig's
 # DDS graph, so it must run on the same domain as the rig's nodes. The rendered
 # config carries the domain too, and the installer writes both from the same
@@ -14,9 +27,6 @@ EnvironmentFile=/etc/fm-comms.env
 ExecStart=/usr/bin/zenoh-bridge-ros2dds --config /etc/fm-comms/bridge.json5
 Restart=always
 RestartSec=5
-# A rig boots before the office router is reachable, and a rig on Wi-Fi loses it
-# again; the bridge must keep retrying forever rather than being rate-limited out.
-StartLimitIntervalSec=0
 
 NoNewPrivileges=true
 ProtectSystem=strict

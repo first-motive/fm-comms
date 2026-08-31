@@ -1,0 +1,90 @@
+# transport.d2 — where every process on the fleet meets.
+#
+# The one picture that answers "why does my topic not arrive". DDS no longer
+# crosses a network: each host keeps a loopback-only DDS graph, and a
+# zenoh-bridge-ros2dds republishes only the topics its profile allows onto the
+# single zenohd router. The router is the fleet's meeting point, and it lives on
+# Rune — always on, wired, tailnet-attached — never on the workstation that is
+# wiped and rebooted, and never inside Rune's own CI guest. It binds two sockets:
+# Rune's LAN address for the office, and its tailnet address for everywhere else.
+...@styles
+
+direction: down
+
+title: |md
+  # Zenoh Transport
+  One router. One bridge per host. DDS never leaves a machine.
+| { near: top-center; style.font-size: 26 }
+
+rune: Rune — office Mac mini {
+  style.stroke: "#3B3443"
+  style.fill: transparent
+  # Three edges arrive at the top of this container, and the container's own
+  # title sits there by default — the label moves out of their way rather than
+  # being drawn through them.
+  label.near: bottom-center
+
+  host: "" {
+    grid-rows: 3
+    class: block
+    r: Host (launchd) { class: role }
+    p: fm-comms { class: pkg }
+    a: "zenohd — LAN + tailnet" { class: art }
+  }
+
+  guest: CI guest {
+    class: zoom
+    label: "CI guest — never the router\n(ephemeral, network isolated)"
+    style.font-size: 12
+  }
+}
+
+ws: Workstation {
+  style.stroke: "#3B3443"
+  style.fill: transparent
+
+  bridge: "" {
+    grid-rows: 3
+    class: block
+    r: Processor { class: role }
+    p: bridge-processor { class: pkg }
+    a: zenoh-bridge-ros2dds { class: art }
+  }
+  dds: "DDS on loopback\nsim · inference · training" { class: topic }
+}
+
+rec: Recorder — fm-rec-01 {
+  style.stroke: "#3B3443"
+  style.fill: transparent
+
+  bridge: "" {
+    grid-rows: 3
+    class: block
+    r: Recorder { class: role }
+    p: bridge-recorder { class: pkg }
+    a: zenoh-bridge-ros2dds { class: art }
+  }
+  dds: "DDS on loopback\ncameras · tracker · capture" { class: topic }
+}
+
+mac: Mac — cockpit {
+  style.stroke: "#3B3443"
+  style.fill: transparent
+
+  bridge: "" {
+    grid-rows: 3
+    class: block
+    r: Cockpit (LaunchAgent) { class: role }
+    p: bridge-cockpit { class: pkg }
+    a: zenoh-bridge-ros2dds { class: art }
+  }
+  dds: "DDS on loopback\nfleet topics in · teleop out" { class: topic }
+}
+
+ws.dds -> ws.bridge: allowed topics only
+rec.dds -> rec.bridge: allowed topics only
+mac.dds -> mac.bridge: allowed topics only
+
+ws.bridge -> rune.host: tcp/rune:7447 — LAN in the office
+rec.bridge -> rune.host: tcp/rune:7447 — LAN in the office
+mac.bridge -> rune.host: tcp/rune:7447 — tailnet off-site

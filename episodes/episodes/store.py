@@ -86,15 +86,20 @@ def find_record(recordings_dir: str | Path, episode_id: str) -> dict[str, Any]:
     raise EpisodeError(f"unknown episode: {episode_id}")
 
 
-def resolve_mcap(recordings_dir: str | Path, episode_id: str) -> Path:
-    """The MCAP file for one episode, guaranteed to sit under ``recordings_dir``.
+# The recorder writes its authoritative per-episode metadata beside the bag
+# directory, not inside it: ``<bag>/`` and ``<bag>.episode.json`` are siblings
+# (fm-data's ``fm_data_record.core.naming.sidecar_path``).
+SIDECAR_SUFFIX = ".episode.json"
+
+
+def resolve_bag(recordings_dir: str | Path, episode_id: str) -> Path:
+    """The bag directory for one episode, guaranteed to sit under ``recordings_dir``.
 
     The index record's ``path`` is a bag *directory* written by the recorder, and it
     may be absolute (recorded on the rig) or relative. Either way the result is
     re-resolved and checked against the recordings root: the index is a derived file
     an operator can edit, so its ``path`` is treated as input to validate rather
-    than a location to trust. A bag with several MCAP parts resolves to the first
-    by name, which is the recorder's write order.
+    than a location to trust.
     """
 
     root = Path(recordings_dir).resolve()
@@ -106,21 +111,79 @@ def resolve_mcap(recordings_dir: str | Path, episode_id: str) -> Path:
 
     bag = Path(raw)
     # An absolute path recorded on a different host does not exist here; fall back
-    # to the same-named directory under this root, which is what rsync lands.
+    # to the same-named directory under this root, which is what a transfer lands.
     candidates = [bag] if bag.is_absolute() else []
     candidates += [root / bag.name, root / bag]
 
     for candidate in candidates:
         resolved = candidate.resolve()
-        if not _within(resolved, root):
-            continue
-        if not resolved.is_dir():
-            continue
-        parts = sorted(resolved.glob("*.mcap"))
-        if parts:
-            return parts[0]
+        if _within(resolved, root) and resolved.is_dir():
+            return resolved
 
-    raise EpisodeError(f"no mcap found for episode {episode_id}")
+    raise EpisodeError(f"no bag directory found for episode {episode_id}")
+
+
+def resolve_mcap(recordings_dir: str | Path, episode_id: str) -> Path:
+    """The MCAP file for one episode.
+
+    A bag with several MCAP parts resolves to the first by name, which is the
+    recorder's write order.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    parts = sorted(directory.glob("*.mcap"))
+    if not parts:
+        raise EpisodeError(f"no mcap found for episode {episode_id}")
+    return parts[0]
+
+
+# A bag directory is not one file. rosbag2 writes the recording as
+# ``<name>_0.mcap`` alongside a ``metadata.yaml`` that names it, and the engine
+# refuses a directory carrying one without the other ("incomplete bag:
+# metadata.yaml is missing"). Serving only the MCAP, under a name of the client's
+# own invention, produced exactly that (gate 4.2).
+def list_bag_files(recordings_dir: str | Path, episode_id: str) -> list[str]:
+    """Every file in one episode's bag directory, by name, sorted.
+
+    Names only: the caller reconstructs the directory on its own side, and a path
+    would let this decide where the other machine writes.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    return sorted(p.name for p in directory.iterdir() if p.is_file())
+
+
+def resolve_bag_file(
+    recordings_dir: str | Path, episode_id: str, name: str
+) -> Path:
+    """One named file inside an episode's bag directory.
+
+    ``name`` arrives from the network, so it is matched against what the directory
+    actually holds rather than joined onto it — a join would accept ``../`` and a
+    check after the fact is one refactor away from being dropped.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    for candidate in directory.iterdir():
+        if candidate.is_file() and candidate.name == name:
+            return candidate
+    raise EpisodeError(f"episode {episode_id} has no file {name!r}")
+
+
+def resolve_sidecar(recordings_dir: str | Path, episode_id: str) -> Path:
+    """The ``<bag>.episode.json`` sidecar for one episode.
+
+    Served because it is what makes a fetched episode processable. The index record
+    is derived and carries only what a listing view needs; the engine reads the
+    sidecar, so an episode pulled without one lands as an episode the processor
+    cannot grade.
+    """
+
+    directory = resolve_bag(recordings_dir, episode_id)
+    sidecar = directory.parent / (directory.name + SIDECAR_SUFFIX)
+    if not sidecar.is_file():
+        raise EpisodeError(f"no sidecar found for episode {episode_id}")
+    return sidecar
 
 
 def _within(path: Path, root: Path) -> bool:

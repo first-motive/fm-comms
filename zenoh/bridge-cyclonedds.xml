@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  bridge-cyclonedds.xml — the DDS side of the Mac's bridge.
+
+  Not a template: nothing here is per-host. `scripts/install-bridge.sh` copies it
+  to ~/.config/fm-comms/cyclonedds.xml on macOS and the LaunchAgent points
+  CYCLONEDDS_URI at it.
+
+  Why fm-comms carries a DDS config at all, when the ROS environment is fm-ros2's
+  business: the bridge is this repo's process, started by this repo's LaunchAgent,
+  and launchd sources no shell profile. It never reads comms-zenoh.sh, so the
+  settings that profile exports reach every ROS node on the Mac and not the one
+  process that has to join them. The values below are deliberately the same as
+  that profile's, because the bridge and the nodes must land in the same graph.
+
+  On a rig the same settings arrive through the shell the systemd unit inherits
+  from the container image, which is why there is no Linux copy of this file.
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <!-- Loopback has no multicast. Say so, rather than letting Cyclone
+           discover it and log a warning on every start. -->
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <!-- What replaces multicast: probe localhost for peers. -->
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+      <!-- The ceiling that matters. Unicast discovery needs a distinct
+           participant index per process and the default ceiling is nine — well
+           under what a cockpit reaches once rviz, a foxglove bridge, and a
+           handful of `ros2` commands are running. The tenth participant does not
+           degrade, it fails outright:
+
+             Failed to find a free participant index for domain 0
+
+           and if the one that fails is this bridge, the Mac sees nothing from
+           the fleet while every other process looks healthy. -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from episodes.query import answer
-from tests.test_store import bag, record, write_index
+from tests.test_store import bag, record, sidecar, write_index
 
 
 def payload(reply):
@@ -66,7 +66,7 @@ def test_an_unknown_episode_is_refused(tmp_path):
 
 
 def test_an_unknown_resource_is_refused(tmp_path):
-    reply = answer("fm/episodes/fm__e1/sidecar", tmp_path)
+    reply = answer("fm/episodes/fm__e1/thumbnail", tmp_path)
     assert not reply.ok
     assert "no such episode resource" in payload(reply)["error"]
 
@@ -80,3 +80,61 @@ def test_a_key_outside_the_prefix_is_refused(tmp_path):
 def test_leading_and_trailing_slashes_are_tolerated(tmp_path):
     write_index(tmp_path, [record("fm__e1", "e1")])
     assert answer("/fm/episodes/index/", tmp_path).ok
+
+
+def test_sidecar_key_returns_the_recorder_s_own_bytes(tmp_path):
+    bag(tmp_path, "e1")
+    body = b'{"episode_id": "fm__e1", "task_id": "pick-v1"}'
+    sidecar(tmp_path, "e1", body)
+    write_index(tmp_path, [record("fm__e1", "e1")])
+
+    reply = answer("fm/episodes/fm__e1/sidecar", tmp_path)
+    assert reply.ok
+    assert reply.encoding == "application/json"
+    # Byte-for-byte, not re-serialised: the sidecar is the authoritative record.
+    assert reply.payload == body
+
+
+def test_a_missing_sidecar_is_refused_with_a_reason(tmp_path):
+    bag(tmp_path, "e1")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+    reply = answer("fm/episodes/fm__e1/sidecar", tmp_path)
+    assert not reply.ok
+    assert "no sidecar found" in payload(reply)["error"]
+
+
+def test_a_traversing_id_never_reaches_the_sidecar_resolver(tmp_path):
+    reply = answer("fm/episodes/..%2F..%2Fetc/sidecar", tmp_path)
+    assert not reply.ok
+    assert "malformed episode id" in payload(reply)["error"]
+
+
+def test_files_lists_the_bag_directory(tmp_path):
+    directory = bag(tmp_path, "e1", mcap="e1_0.mcap")
+    (directory / "metadata.yaml").write_bytes(b"rosbag2_bagfile_information:\n")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+
+    reply = answer("fm/episodes/fm__e1/files", tmp_path)
+    assert reply.ok
+    assert payload(reply) == ["e1_0.mcap", "metadata.yaml"]
+
+
+def test_one_named_file_comes_back_verbatim(tmp_path):
+    directory = bag(tmp_path, "e1", mcap="e1_0.mcap")
+    (directory / "metadata.yaml").write_bytes(b"rosbag2_bagfile_information:\n")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+
+    reply = answer("fm/episodes/fm__e1/file/metadata.yaml", tmp_path)
+    assert reply.ok
+    assert reply.payload == b"rosbag2_bagfile_information:\n"
+
+
+def test_a_traversing_file_name_is_refused(tmp_path):
+    # The name arrives over the network and is matched against what the directory
+    # holds, never joined onto it.
+    bag(tmp_path, "e1")
+    (tmp_path / "secret").write_bytes(b"nope")
+    write_index(tmp_path, [record("fm__e1", "e1")])
+
+    reply = answer("fm/episodes/fm__e1/file/..%2Fsecret", tmp_path)
+    assert not reply.ok

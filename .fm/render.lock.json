@@ -2,7 +2,7 @@
   "_fm_render": {
     "artifact": "render-lock",
     "origin": "rendered by the First Motive render plane \u2014 edit the upstream source, not this file",
-    "sha256": "de54e2eed23182207cc522ebf231b51c534f2cd718f7eecc3ee77bcae178c1e2"
+    "sha256": "98b48f26e27262724bbae5c46a34b8d7f7e0698bce362f7ea386e66ef5f962ad"
   },
   "artifacts": {
     "agents-invariants": {
@@ -20,6 +20,22 @@
       ],
       "sha256": "4a3ac9a4c1cbb5995c5a0e4d5b6beb580f50090c14bc5170cd21c84ee4635dd0",
       "stamp": "html"
+    },
+    "d2-render": {
+      "mode": "file",
+      "paths": [
+        "docs/diagrams/render.sh"
+      ],
+      "sha256": "d3e26de6631f1c40ac0029659c407960d8818f4b1384b3f4cf2857f0c74c4c61",
+      "stamp": "hash"
+    },
+    "d2-styles": {
+      "mode": "file",
+      "paths": [
+        "docs/diagrams/styles.d2"
+      ],
+      "sha256": "f779c99b7e9f1b2480fea5a0ace77949e007f5f01d802b1dbdac8c9764ae14f0",
+      "stamp": "hash"
     },
     "pre-push-hook": {
       "mode": "file",

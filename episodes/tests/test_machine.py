@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from episodes.machine import (
@@ -33,8 +34,11 @@ def test_reads_a_current_card(tmp_path):
     assert read_card(write_card(tmp_path, CARD)) == CARD
 
 
-def test_recordings_sit_under_the_workspace(tmp_path):
-    assert str(recordings_dir(write_card(tmp_path, CARD))) == "/home/fm/fm/recordings"
+def test_recordings_sit_in_the_home_directory(tmp_path):
+    # NOT under the card's workspace, which names where the checkouts live. Every
+    # other component writes and reads ~/recordings; deriving anything else pointed
+    # the queryable at a directory that has never existed on a rig (gate 4.2).
+    assert recordings_dir(write_card(tmp_path, CARD)) == Path.home() / "recordings"
 
 
 def test_absent_card_is_not_an_error(tmp_path):
@@ -59,11 +63,11 @@ def test_unparseable_card_is_refused(tmp_path):
         read_card(path)
 
 
-def test_card_without_a_workspace_is_refused(tmp_path):
+def test_a_card_without_a_workspace_still_resolves(tmp_path):
+    # The workspace field is no longer what answers this question, so its absence
+    # is not a refusal.
     card = {k: v for k, v in CARD.items() if k != "workspace"}
-    with pytest.raises(MachineCardError):
-        recordings_dir(write_card(tmp_path, card))
-
+    assert recordings_dir(write_card(tmp_path, card)) == Path.home() / "recordings"
 
 def test_env_override_names_the_card(tmp_path, monkeypatch):
     path = write_card(tmp_path, CARD)
