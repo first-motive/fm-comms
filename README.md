@@ -104,7 +104,7 @@ never committed.
 | recordings directory | card `workspace`, plus `/recordings` |
 | whether this host runs Zenoh at all | card `transport` |
 | where a `curl \| bash` install puts its checkout | card `workspace` |
-| bridge profile | card `workload` |
+| bridge profile | card `workload`, refined by card `robot` |
 | router endpoint, router port, ROS domain | `/etc/fm-comms.env` — fleet-wide |
 | the router's two bind addresses | the host itself, at render time |
 
@@ -116,9 +116,17 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
+robot-anvil  an Anvil workcell: state and cameras out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
+
+`robot-anvil` is the one profile a card does not name directly. A host whose
+workload is `robot` and whose `robot` field names an anvil kind takes it instead
+of `robot`, because an Anvil is driven through the robot agent's queryables and
+never by publishing to it. It is the robot profile with the inbound half removed:
+joint states, hardware state, recording status, controls owner, end effector
+poses, and compressed camera frames go out, and no topic comes back.
 
 `workstation` is the union of `robot` and `processor`, and exists because the
 tower is genuinely both machines: the sim publishes the joint states the cockpit

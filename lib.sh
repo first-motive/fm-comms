@@ -570,7 +570,7 @@ fm_comms_resolve() {
 }
 
 # Echo the bridge profile this machine runs: recorder | processor | robot |
-# workstation | cockpit.
+# robot-anvil | workstation | cockpit.
 #
 # Taken from the card's `workload`, which is the field that answers the question
 # `role` cannot — a recorder rig and a processor rig are both jetsons. That was
@@ -596,6 +596,22 @@ fm_comms_bridge_profile() {
     fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|workstation|cockpit>"
     fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
+  fi
+  # An Anvil workcell is a robot with no inbound half. The desktop drives it
+  # through the agent's queryables and never publishes to it, so it takes the
+  # profile that carries no subscribers at all rather than the arm profile that
+  # accepts Servo jogs. The card's `robot` field names the kind; the workload
+  # stays `robot`, because that is still the work this host does.
+  #
+  # Skipped when FM_BRIDGE_PROFILE is set: an explicitly forced profile is a
+  # bench run, and refining it out from under the operator would render a file
+  # they did not ask for.
+  if [ "$profile" = robot ] && [ -z "${FM_BRIDGE_PROFILE:-}" ]; then
+    local kind
+    kind="$(fm_machine_get_opt robot)" || return 1
+    case "$kind" in
+      anvil-*) profile=robot-anvil ;;
+    esac
   fi
   # The profile becomes a path segment, so hold it to the shape a filename can
   # take — otherwise a stray value walks out of zenoh/ and renders something else.
