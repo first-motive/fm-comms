@@ -894,10 +894,28 @@ fm_install_zenoh_macos() {
   find "$tmp/x" -type f \( -name "$binary" -o -name '*.dylib' \) -exec cp {} "$dest/" \;
   chmod +x "$dest/$binary"
   rm -rf "$tmp"
-  local got
-  got="$(fm_zenoh_version_at "$dest/$binary")"
+  # Verified, and retried once. A freshly written binary has been seen to report
+  # nothing on its very first execution and the pinned version on the next — so a
+  # single probe turns a transient into a failed install, which is what happened
+  # on Rune (2026-08-31: "installed zenohd reports '', expected 1.9.0", while the
+  # same binary ran fine seconds later).
+  local got=""
+  local attempt
+  for attempt in 1 2; do
+    got="$(fm_zenoh_version_at "$dest/$binary")"
+    [ "$got" = "$version" ] && break
+    [ "$attempt" = 1 ] && sleep 1
+  done
   [ "$got" = "$version" ] || {
     fm_err "installed $binary reports '$got', expected $version"
+    # An empty reading says nothing about why. Show what the binary actually
+    # does, which is the difference between "wrong build" and "will not run".
+    fm_err "  $dest/$binary --version said:"
+    "$dest/$binary" --version 2>&1 | head -3 | sed 's/^/       /' >&2 || true
+    if xattr -p com.apple.quarantine "$dest/$binary" >/dev/null 2>&1; then
+      fm_err "  it carries com.apple.quarantine — Gatekeeper is refusing to run it:"
+      fm_err "       xattr -d com.apple.quarantine $dest/$binary"
+    fi
     return 1
   }
   fm_log "  $binary $version installed at $dest/$binary"

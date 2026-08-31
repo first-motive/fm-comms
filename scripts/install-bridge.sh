@@ -176,6 +176,32 @@ install_unit_linux() {
   fm_log "  watch it with: journalctl -u $UNIT -f"
 }
 
+# Who the LaunchAgent belongs to, and how to talk to launchd about it.
+#
+# The bridge is a per-user agent: its plist lives in the user's ~/Library and its
+# domain is `gui/<their uid>`. Run the installer under sudo — which the Linux path
+# needs, and which an operator therefore reaches for on both — and `id -u` is 0,
+# so every launchctl call addresses `gui/0`. launchd refuses that domain outright:
+#
+#   Bootstrap failed: 125: Domain does not support specified action
+#
+# The install then leaves a rendered config that nothing has loaded, which reads
+# as success right up until the bridge is found running its previous endpoint.
+#
+# So the agent's owner is resolved once — SUDO_USER when the installer was
+# elevated, this user otherwise — and every launchctl call is made as them.
+FM_AGENT_USER="${SUDO_USER:-$(id -un)}"
+FM_AGENT_UID="$(id -u "$FM_AGENT_USER" 2>/dev/null || id -u)"
+
+# Run one launchctl command in the agent owner's context.
+fm_launchctl() {
+  if [ "$(id -u)" = 0 ] && [ "$FM_AGENT_USER" != root ]; then
+    run sudo -u "$FM_AGENT_USER" launchctl "$@"
+  else
+    run launchctl "$@"
+  fi
+}
+
 # The macOS service path: a user LaunchAgent, rendered and bootstrapped.
 #
 # Nothing here needs sudo, and that is the point — the config and the job belong
@@ -193,10 +219,30 @@ install_agent_macos() {
   fm_log "  installing $USER_CONF_DIR/cyclonedds.xml"
   run install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$USER_CONF_DIR/cyclonedds.xml"
 
+  # macOS Local Network privacy, which no error message will mention.
+  #
+  # A LaunchAgent has no Local Network permission of its own, and macOS refuses
+  # its connections to private LAN addresses with EHOSTUNREACH — while the same
+  # address answers `nc` from Terminal, which does hold the permission. The bridge
+  # then dies at start with
+  #
+  #   No route to host (os error 65) ... Failed to start Zenoh runtime
+  #
+  # and every reading looks like a network fault. A Tailscale address is not
+  # "local network" and is unaffected, which is why the Mac's endpoint is the
+  # tailnet one even in the office (fm-comms#18, measured 2026-08-31).
+  case "${FM_ROUTER_ENDPOINT:-}" in
+    *tcp/10.*|*tcp/192.168.*|*tcp/172.1[6-9].*|*tcp/172.2[0-9].*|*tcp/172.3[01].*)
+      fm_warn "  FM_ROUTER_ENDPOINT is a private LAN address: ${FM_ROUTER_ENDPOINT}"
+      fm_warn "  macOS blocks a LaunchAgent from reaching one (Local Network privacy),"
+      fm_warn "  so this bridge will fail to start with 'No route to host'."
+      fm_warn "  Use the router's tailnet address here; the rigs can keep the LAN one."
+      ;;
+  esac
+
   fm_log "  installing $AGENT_PLIST"
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would write $AGENT_PLIST:"
-    fm_comms_render launchagent - || return 1
+    fm_log "  would write $AGENT_PLIST"
   else
     fm_comms_render launchagent "$AGENT_PLIST" || return 1
   fi
@@ -204,8 +250,27 @@ install_agent_macos() {
   # An existing job holds the DDS participant and the router session, so it is
   # taken out first. It may legitimately not be loaded, which is not a failure
   # worth stopping the install for.
-  run launchctl bootout "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
-  run launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
+  # Everything past the render mutates this machine: it installs an agent into the
+  # user's LaunchAgents and restarts the running bridge. FM_DRY_RUN promises none
+  # of that happens, and only the render honoured it — so a dry run rewrote a live
+  # config and kickstarted the bridge onto it (found 2026-08-31, twice, on the Mac
+  # whose fleet visibility it removed). Stop here instead.
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would install $AGENT_PLIST"
+    fm_log "  would (re)load $FM_LAUNCHD_BRIDGE_LABEL in gui/$FM_AGENT_UID"
+    return 0
+  fi
+
+  # Written by root when the installer was elevated, and launchd will not load an
+  # agent out of a user's LaunchAgents that the user does not own. Hand it back
+  # along with the rendered config and the log directory beside it.
+  if [ "$(id -u)" = 0 ] && [ "$FM_AGENT_USER" != root ]; then
+    run chown "$FM_AGENT_USER" "$AGENT_PLIST" 2>/dev/null || true
+    run chown -R "$FM_AGENT_USER" "$FM_COMMS_USER_CONF_DIR" "$LOG_DIR" 2>/dev/null || true
+  fi
+
+  fm_launchctl bootout "gui/$FM_AGENT_UID/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
+  fm_launchctl bootstrap "gui/$FM_AGENT_UID" "$AGENT_PLIST"
 
   # The macOS half of the same guarantee. bootout/bootstrap already replaces the
   # process in the ordinary case, but a bootout that was refused leaves bootstrap
@@ -217,7 +282,7 @@ install_agent_macos() {
   else
     fm_log "  config unchanged — kickstarting $FM_LAUNCHD_BRIDGE_LABEL to match the file on disk"
   fi
-  run launchctl kickstart -k "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL"
+  fm_launchctl kickstart -k "gui/$FM_AGENT_UID/$FM_LAUNCHD_BRIDGE_LABEL"
   fm_log "  watch it with: tail -f $LOG_DIR/zenoh-bridge.log"
 }
 
@@ -264,7 +329,7 @@ do_uninstall() {
     run sudo apt-mark unhold zenoh-bridge-ros2dds 2>/dev/null || true
     fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"
   else
-    run launchctl bootout "gui/$(id -u)/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
+    fm_launchctl bootout "gui/$FM_AGENT_UID/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
     run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5" "$USER_CONF_DIR/cyclonedds.xml"
     # The logs outlive the job on purpose: the reason a bridge was removed is
     # usually in them, and this is the moment someone wants to read it.
