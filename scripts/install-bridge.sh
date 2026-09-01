@@ -157,8 +157,20 @@ install_unit_linux() {
   # runs stock discovery — default interface, ~9-participant loopback ceiling —
   # and quietly misses nodes past the ceiling; fm-rec-01's cameras never
   # crossed while every gate line around them stayed green.
+  # Rendered, not copied: a host whose vendor stack pinned CycloneDDS to one
+  # interface needs a bridge on that same interface, and which one is a per-host
+  # fact. See fm_comms_render cyclonedds.
   fm_log "  installing $CONF_DIR/cyclonedds.xml"
-  run sudo install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$CONF_DIR/cyclonedds.xml"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write $CONF_DIR/cyclonedds.xml:"
+    fm_comms_render cyclonedds - || return 1
+  else
+    local dds_tmp
+    dds_tmp="$(mktemp)"
+    fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    run sudo install -m 0644 "$dds_tmp" "$CONF_DIR/cyclonedds.xml"
+    rm -f "$dds_tmp"
+  fi
 
   fm_log "  installing $UNIT"
   run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
@@ -223,10 +235,20 @@ install_agent_macos() {
   run mkdir -p "$USER_CONF_DIR" "$LOG_DIR" "$(dirname "$AGENT_PLIST")"
   render_config "$USER_CONF_DIR/bridge.json5" || return 1
 
-  # The DDS side, which launchd cannot inherit from a shell. Static, so it is
-  # copied rather than rendered.
+  # The DDS side, which launchd cannot inherit from a shell. Rendered rather than
+  # copied: which interface the graph lives on is a per-host fact (see
+  # fm_comms_render cyclonedds).
   fm_log "  installing $USER_CONF_DIR/cyclonedds.xml"
-  run install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$USER_CONF_DIR/cyclonedds.xml"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write $USER_CONF_DIR/cyclonedds.xml:"
+    fm_comms_render cyclonedds - || return 1
+  else
+    local dds_tmp
+    dds_tmp="$(mktemp)"
+    fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    run install -m 0644 "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"
+    rm -f "$dds_tmp"
+  fi
 
   # macOS Local Network privacy, which no error message will mention.
   #

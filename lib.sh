@@ -717,6 +717,19 @@ fm_comms_render() {
       fm_render_template "$template" "$dest" \
         FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
       ;;
+    cyclonedds)
+      # Two shapes, and which one a host takes is decided by one question: is
+      # this bridge joining a graph that somebody else pinned to an interface?
+      # FM_DDS_IFACE answers it. Unset means every node here is localhost-only,
+      # which is fm-ros2's own default and the Mac cockpit's.
+      if [ -n "${FM_DDS_IFACE:-}" ]; then
+        fm_render_template "$root/zenoh/bridge-cyclonedds-iface.xml.in" "$dest" FM_DDS_IFACE
+      elif [ "$dest" = "-" ]; then
+        cat "$root/zenoh/bridge-cyclonedds.xml"
+      else
+        cat "$root/zenoh/bridge-cyclonedds.xml" >"$dest"
+      fi
+      ;;
     launchd)
       # The router's macOS daemon. Rendered through the same path as the configs
       # so `./run.sh render launchd` shows exactly what an install would load —
