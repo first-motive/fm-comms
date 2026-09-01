@@ -168,12 +168,29 @@ install_unit_linux() {
     local dds_tmp
     dds_tmp="$(mktemp)"
     fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    # A DDS change moves which graph the bridge can see, so it restarts for the
+    # same reason a config change does. This was safe to ignore while the file
+    # was static and is not now.
+    if fm_file_differs "$dds_tmp" "$CONF_DIR/cyclonedds.xml"; then FM_RENDER_CHANGED=1; fi
     run sudo install -m 0644 "$dds_tmp" "$CONF_DIR/cyclonedds.xml"
     rm -f "$dds_tmp"
   fi
 
+  # Rendered, not copied: the distro the graph was built with and whether that
+  # graph is confined to loopback are both per-host facts. A unit change is also
+  # a reason to restart, which is why FM_RENDER_CHANGED is raised here too.
   fm_log "  installing $UNIT"
-  run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write /etc/systemd/system/$UNIT:"
+    fm_comms_render bridge-unit - || return 1
+  else
+    local unit_tmp
+    unit_tmp="$(mktemp)"
+    fm_comms_render bridge-unit "$unit_tmp" || { rm -f "$unit_tmp"; return 1; }
+    if fm_file_differs "$unit_tmp" "/etc/systemd/system/$UNIT"; then FM_RENDER_CHANGED=1; fi
+    run sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/$UNIT"
+    rm -f "$unit_tmp"
+  fi
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "$UNIT"
 
@@ -246,6 +263,9 @@ install_agent_macos() {
     local dds_tmp
     dds_tmp="$(mktemp)"
     fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    # Same reason as the Linux path: a DDS change moves which graph the bridge
+    # can see, and the log should not say "unchanged" when a file just did.
+    if fm_file_differs "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"; then FM_RENDER_CHANGED=1; fi
     run install -m 0644 "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"
     rm -f "$dds_tmp"
   fi

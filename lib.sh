@@ -717,6 +717,24 @@ fm_comms_render() {
       fm_render_template "$template" "$dest" \
         FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
       ;;
+    bridge-unit)
+      # The unit carries two facts that are the host's, not the fleet's: which
+      # ROS distro the graph it joins was built with, and whether that graph is
+      # confined to loopback. Both were literals here while every bridge ran on a
+      # First Motive rig; neither holds on a robot its vendor supports.
+      # A comment rather than an empty string, because fm_render_template
+      # refuses an empty value — and because the installed unit should say why
+      # the line is absent rather than leave a reader wondering.
+      local localhost_line="# ROS_LOCALHOST_ONLY is deliberately unset: this bridge"
+      localhost_line="$localhost_line joins a graph on a named interface."
+      if [ -z "${FM_DDS_IFACE:-}" ]; then
+        localhost_line="Environment=ROS_LOCALHOST_ONLY=1"
+      fi
+      FM_ROS_DISTRO="${FM_ROS_DISTRO:-humble}" \
+      FM_LOCALHOST_ONLY_LINE="$localhost_line" \
+        fm_render_template "$root/systemd/fm-zenoh-bridge.service.in" "$dest" \
+          FM_ROS_DISTRO FM_LOCALHOST_ONLY_LINE
+      ;;
     cyclonedds)
       # Two shapes, and which one a host takes is decided by one question: is
       # this bridge joining a graph that somebody else pinned to an interface?
