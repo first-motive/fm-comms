@@ -104,9 +104,14 @@ place_env() {
     run sudo install -m 0644 "$ROOT/systemd/fm-comms.env.example" "$ENV_FILE"
   fi
   [ "$FM_DRY_RUN" = "1" ] && return 0
-  # An unattended run already knows where the router is; a person at a keyboard
-  # does not need to be asked for it twice. Only ever fills a placeholder.
+  # An unattended run already knows these; a person at a keyboard does not need
+  # to be asked twice. Never overwrites a value someone chose.
   fm_comms_env_seed FM_ROUTER_ENDPOINT "${FM_ROUTER_ENDPOINT:-}"
+  # Both spellings: this unit exports ROS_DOMAIN_ID from the file, and the
+  # rendered config takes the domain from FM_ROS_DOMAIN_ID. The two are kept
+  # equal so they cannot drift apart.
+  fm_comms_env_seed FM_ROS_DOMAIN_ID "${FM_ROS_DOMAIN_ID:-}"
+  fm_comms_env_seed ROS_DOMAIN_ID "${FM_ROS_DOMAIN_ID:-}"
   local missing
   missing="$(fm_comms_env_unfilled FM_ROUTER_ENDPOINT)"
   [ -z "$missing" ] && return 0

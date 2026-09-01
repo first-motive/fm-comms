@@ -559,13 +559,24 @@ fm_comms_env_seed() {
   # for the resolved environment, and an unattended caller has by definition
   # exported the very value it is asking about — which would report the key
   # filled while the file still said CHANGEME, and the unit reads the file.
-  local current
+  local current example
   current="$(sed -n "s/^${key}=//p" "$file" | tail -1)"
+  example="$(sed -n "s/^${key}=//p" "$(fm_comms_root)/systemd/fm-comms.env.example" | tail -1)"
+
+  # Untouched means: empty, a CHANGEME placeholder, or still exactly what the
+  # example ships. That last case is why this compares against the example at all
+  # — not every default is spelled CHANGEME. FM_ROS_DOMAIN_ID ships as a real 0,
+  # so without this a robot whose vendor stack runs on another domain would keep
+  # the fleet default forever and its bridge would match nothing.
   case "$current" in
     "" | *CHANGEME*) ;;
     *)
-      fm_log "  $key is already set in $file; leaving it alone"
-      return 0
+      if [ -n "$example" ] && [ "$current" = "$example" ]; then
+        :
+      else
+        fm_log "  $key is already set in $file; leaving it alone"
+        return 0
+      fi
       ;;
   esac
   tmp="$(mktemp)"
