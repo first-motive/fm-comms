@@ -60,7 +60,15 @@ Pick the role this host plays:
 ./install.sh --role router      # Rune: run zenohd under launchd
 ./install.sh --role bridge      # a rig or a Mac: run zenoh-bridge-ros2dds
 ./install.sh --role client      # a laptop: the CLI tools only
+./install.sh --role endpoint    # a host with no DDS graph: the shared env file only
 ```
+
+`--role endpoint` is the narrowest role: it places `/etc/fm-comms.env` and stops.
+It is for a host that talks to the router without joining a DDS graph — the
+Almond Axol, whose own stack owns the CAN bus and whose agent publishes joint
+states onto Zenoh directly, so a bridge there would carry nothing. The router
+endpoint still has to come from somewhere, and it comes from the one file the
+whole fleet shares.
 
 `--role bridge` dispatches by OS. On Linux it places a systemd unit, up at boot;
 on macOS it places a user LaunchAgent, up while someone is logged in. The Mac

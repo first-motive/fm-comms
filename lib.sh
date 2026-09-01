@@ -541,6 +541,41 @@ fm_comms_env_unfilled() {
   [ -z "$missing" ] || printf '%s\n' "$missing"
 }
 
+# fm_comms_env_seed KEY VALUE — write a value into the env file, once.
+#
+# For the one case where a value is known before a person could type it: an
+# unattended provisioning run that already knows where the router is. It writes
+# only into a placeholder — a key an operator has already filled is never
+# overwritten, because this exists to save a first edit, not to win an argument
+# with the host's own configuration.
+#
+# The rewrite is idempotent and atomic: drop any existing assignment, append the
+# new one, replace the file. Every other key survives untouched.
+fm_comms_env_seed() {
+  local key="$1" value="$2" file="$FM_COMMS_ENV_FILE" tmp
+  [ -n "$value" ] || return 0
+  [ -f "$file" ] || return 0
+  # The FILE is what is read, not the environment. fm_comms_env_unfilled answers
+  # for the resolved environment, and an unattended caller has by definition
+  # exported the very value it is asking about — which would report the key
+  # filled while the file still said CHANGEME, and the unit reads the file.
+  local current
+  current="$(sed -n "s/^${key}=//p" "$file" | tail -1)"
+  case "$current" in
+    "" | *CHANGEME*) ;;
+    *)
+      fm_log "  $key is already set in $file; leaving it alone"
+      return 0
+      ;;
+  esac
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$file" >"$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  sudo install -m 0644 "$tmp" "$file"
+  rm -f "$tmp"
+  fm_log "  set $key in $file"
+}
+
 # fm_comms_resolve — fill every template value for this host.
 #
 # The order is deliberate: an already-set environment variable wins, then the env
