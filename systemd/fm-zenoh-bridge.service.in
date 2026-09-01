@@ -10,14 +10,25 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# The bridge maps DDS types and QoS per ROS distro and assumes `iron` when unset.
-# Every First Motive rig runs Humble, natively or in the container it bridges.
-Environment=ROS_DISTRO=humble
+# The bridge maps DDS types and QoS per ROS distro, and — this is the part that
+# bites — it also parses `ros_discovery_info`, whose layout differs between
+# distros. Point it at the wrong one and discovery fails with an invalid-utf-8
+# error while everything else looks healthy: the unit is active, the router is
+# connected, and no topic is ever routed.
+#
+# Every First Motive rig runs Humble. A robot supported by its vendor runs
+# whatever the vendor ships — the Anvil workcell runs Jazzy — so this is a
+# per-host fact, and FM_ROS_DISTRO in fm-comms.env is where it is recorded.
+Environment=ROS_DISTRO=${FM_ROS_DISTRO}
 # The zenoh profile confines the rig's DDS to loopback; the bridge must sit on
 # the same island with the same Cyclone profile — unicast localhost discovery
 # and a raised participant-index ceiling — or it discovers only the first
 # handful of nodes (#23). The macOS LaunchAgent sets both for the same reason.
-Environment=ROS_LOCALHOST_ONLY=1
+#
+# A robot whose vendor pinned CycloneDDS to a real interface is the exception,
+# and there this line is absent: confining the bridge to loopback would put it
+# on an island the graph it must join is not on. FM_DDS_IFACE decides which.
+${FM_LOCALHOST_ONLY_LINE}
 Environment=CYCLONEDDS_URI=file:///etc/fm-comms/cyclonedds.xml
 # Carries ROS_DOMAIN_ID as well as the FM_* values: the bridge joins the rig's
 # DDS graph, so it must run on the same domain as the rig's nodes. The rendered

@@ -541,6 +541,52 @@ fm_comms_env_unfilled() {
   [ -z "$missing" ] || printf '%s\n' "$missing"
 }
 
+# fm_comms_env_seed KEY VALUE — write a value into the env file, once.
+#
+# For the one case where a value is known before a person could type it: an
+# unattended provisioning run that already knows where the router is. It writes
+# only into a placeholder — a key an operator has already filled is never
+# overwritten, because this exists to save a first edit, not to win an argument
+# with the host's own configuration.
+#
+# The rewrite is idempotent and atomic: drop any existing assignment, append the
+# new one, replace the file. Every other key survives untouched.
+fm_comms_env_seed() {
+  local key="$1" value="$2" file="$FM_COMMS_ENV_FILE" tmp
+  [ -n "$value" ] || return 0
+  [ -f "$file" ] || return 0
+  # The FILE is what is read, not the environment. fm_comms_env_unfilled answers
+  # for the resolved environment, and an unattended caller has by definition
+  # exported the very value it is asking about — which would report the key
+  # filled while the file still said CHANGEME, and the unit reads the file.
+  local current example
+  current="$(sed -n "s/^${key}=//p" "$file" | tail -1)"
+  example="$(sed -n "s/^${key}=//p" "$(fm_comms_root)/systemd/fm-comms.env.example" | tail -1)"
+
+  # Untouched means: empty, a CHANGEME placeholder, or still exactly what the
+  # example ships. That last case is why this compares against the example at all
+  # — not every default is spelled CHANGEME. FM_ROS_DOMAIN_ID ships as a real 0,
+  # so without this a robot whose vendor stack runs on another domain would keep
+  # the fleet default forever and its bridge would match nothing.
+  case "$current" in
+    "" | *CHANGEME*) ;;
+    *)
+      if [ -n "$example" ] && [ "$current" = "$example" ]; then
+        :
+      else
+        fm_log "  $key is already set in $file; leaving it alone"
+        return 0
+      fi
+      ;;
+  esac
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$file" >"$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  sudo install -m 0644 "$tmp" "$file"
+  rm -f "$tmp"
+  fm_log "  set $key in $file"
+}
+
 # fm_comms_resolve — fill every template value for this host.
 #
 # The order is deliberate: an already-set environment variable wins, then the env
@@ -570,7 +616,7 @@ fm_comms_resolve() {
 }
 
 # Echo the bridge profile this machine runs: recorder | processor | robot |
-# workstation | cockpit.
+# robot-anvil | workstation | cockpit.
 #
 # Taken from the card's `workload`, which is the field that answers the question
 # `role` cannot — a recorder rig and a processor rig are both jetsons. That was
@@ -596,6 +642,22 @@ fm_comms_bridge_profile() {
     fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|workstation|cockpit>"
     fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
+  fi
+  # An Anvil workcell is a robot with no inbound half. The desktop drives it
+  # through the agent's queryables and never publishes to it, so it takes the
+  # profile that carries no subscribers at all rather than the arm profile that
+  # accepts Servo jogs. The card's `robot` field names the kind; the workload
+  # stays `robot`, because that is still the work this host does.
+  #
+  # Skipped when FM_BRIDGE_PROFILE is set: an explicitly forced profile is a
+  # bench run, and refining it out from under the operator would render a file
+  # they did not ask for.
+  if [ "$profile" = robot ] && [ -z "${FM_BRIDGE_PROFILE:-}" ]; then
+    local kind
+    kind="$(fm_machine_get_opt robot)" || return 1
+    case "$kind" in
+      anvil-*) profile=robot-anvil ;;
+    esac
   fi
   # The profile becomes a path segment, so hold it to the shape a filename can
   # take — otherwise a stray value walks out of zenoh/ and renders something else.
@@ -654,6 +716,37 @@ fm_comms_render() {
       template="$(fm_comms_bridge_template)" || return 1
       fm_render_template "$template" "$dest" \
         FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID
+      ;;
+    bridge-unit)
+      # The unit carries two facts that are the host's, not the fleet's: which
+      # ROS distro the graph it joins was built with, and whether that graph is
+      # confined to loopback. Both were literals here while every bridge ran on a
+      # First Motive rig; neither holds on a robot its vendor supports.
+      # A comment rather than an empty string, because fm_render_template
+      # refuses an empty value — and because the installed unit should say why
+      # the line is absent rather than leave a reader wondering.
+      local localhost_line="# ROS_LOCALHOST_ONLY is deliberately unset: this bridge"
+      localhost_line="$localhost_line joins a graph on a named interface."
+      if [ -z "${FM_DDS_IFACE:-}" ]; then
+        localhost_line="Environment=ROS_LOCALHOST_ONLY=1"
+      fi
+      FM_ROS_DISTRO="${FM_ROS_DISTRO:-humble}" \
+      FM_LOCALHOST_ONLY_LINE="$localhost_line" \
+        fm_render_template "$root/systemd/fm-zenoh-bridge.service.in" "$dest" \
+          FM_ROS_DISTRO FM_LOCALHOST_ONLY_LINE
+      ;;
+    cyclonedds)
+      # Two shapes, and which one a host takes is decided by one question: is
+      # this bridge joining a graph that somebody else pinned to an interface?
+      # FM_DDS_IFACE answers it. Unset means every node here is localhost-only,
+      # which is fm-ros2's own default and the Mac cockpit's.
+      if [ -n "${FM_DDS_IFACE:-}" ]; then
+        fm_render_template "$root/zenoh/bridge-cyclonedds-iface.xml.in" "$dest" FM_DDS_IFACE
+      elif [ "$dest" = "-" ]; then
+        cat "$root/zenoh/bridge-cyclonedds.xml"
+      else
+        cat "$root/zenoh/bridge-cyclonedds.xml" >"$dest"
+      fi
       ;;
     launchd)
       # The router's macOS daemon. Rendered through the same path as the configs

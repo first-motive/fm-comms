@@ -60,7 +60,15 @@ Pick the role this host plays:
 ./install.sh --role router      # Rune: run zenohd under launchd
 ./install.sh --role bridge      # a rig or a Mac: run zenoh-bridge-ros2dds
 ./install.sh --role client      # a laptop: the CLI tools only
+./install.sh --role endpoint    # a host with no DDS graph: the shared env file only
 ```
+
+`--role endpoint` is the narrowest role: it places `/etc/fm-comms.env` and stops.
+It is for a host that talks to the router without joining a DDS graph — the
+Almond Axol, whose own stack owns the CAN bus and whose agent publishes joint
+states onto Zenoh directly, so a bridge there would carry nothing. The router
+endpoint still has to come from somewhere, and it comes from the one file the
+whole fleet shares.
 
 `--role bridge` dispatches by OS. On Linux it places a systemd unit, up at boot;
 on macOS it places a user LaunchAgent, up while someone is logged in. The Mac
@@ -104,7 +112,7 @@ never committed.
 | recordings directory | card `workspace`, plus `/recordings` |
 | whether this host runs Zenoh at all | card `transport` |
 | where a `curl \| bash` install puts its checkout | card `workspace` |
-| bridge profile | card `workload` |
+| bridge profile | card `workload`, refined by card `robot` |
 | router endpoint, router port, ROS domain | `/etc/fm-comms.env` — fleet-wide |
 | the router's two bind addresses | the host itself, at render time |
 
@@ -116,9 +124,17 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
+robot-anvil  an Anvil workcell: state and cameras out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
+
+`robot-anvil` is the one profile a card does not name directly. A host whose
+workload is `robot` and whose `robot` field names an anvil kind takes it instead
+of `robot`, because an Anvil is driven through the robot agent's queryables and
+never by publishing to it. It is the robot profile with the inbound half removed:
+joint states, hardware state, recording status, controls owner, end effector
+poses, and compressed camera frames go out, and no topic comes back.
 
 `workstation` is the union of `robot` and `processor`, and exists because the
 tower is genuinely both machines: the sim publishes the joint states the cockpit

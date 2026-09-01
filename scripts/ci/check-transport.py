@@ -21,7 +21,8 @@ Three passes, in order of how early they catch a mistake:
    fleet depends on: the router binds exactly two non-wildcard endpoints (its LAN
    address and its tailnet address), every bridge is a client with multicast off,
    the recorder never publishes raw frames, the robot never accepts a trajectory
-   from off-rig, and the cockpit Mac publishes teleop and nothing else.
+   from off-rig, the anvil workcell accepts nothing inbound at all, and the
+   cockpit Mac publishes teleop and nothing else.
 
 Run it the same way CI does::
 
@@ -60,12 +61,20 @@ CARDS = {
     "recorder": {"name": "fm-rec-01", "role": "jetson", "workload": "recorder"},
     "processor": {"name": "fm-rec-02", "role": "jetson", "workload": "processor"},
     "robot": {"name": "fm-rec-03", "role": "jetson", "workload": "robot"},
+    # The same workload with the card's `robot` field filled in, which is what
+    # selects the profile that carries no inbound half at all.
+    "robot-anvil": {
+        "name": "fm-rob-01",
+        "role": "robot",
+        "workload": "robot",
+        "robot": "anvil-openarm-v2",
+    },
     "workstation": {"name": "fm-ws-01", "role": "workstation", "workload": "workstation"},
     "cockpit": {"name": "fm-mac-02", "role": "mac", "workload": "cockpit"},
     "router": {"name": "fm-mac-01", "role": "mac", "workload": "router"},
 }
 
-BRIDGE_PROFILES = ("recorder", "processor", "robot", "workstation", "cockpit")
+BRIDGE_PROFILES = ("recorder", "processor", "robot", "robot-anvil", "workstation", "cockpit")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
 FM_ROUTER_ENDPOINT=tcp/fixture-router:7447
@@ -91,17 +100,21 @@ def fail(where: str, message: str) -> None:
 
 
 def card_json(profile: str, spec: dict[str, str]) -> str:
-    return json.dumps(
-        {
-            "schema_version": 1,
-            "name": spec["name"],
-            "role": spec["role"],
-            "fleet": "prod",
-            "transport": "zenoh",
-            "workload": spec["workload"],
-            "workspace": "/home/fm/fm",
-        }
-    )
+    card = {
+        "schema_version": 1,
+        "name": spec["name"],
+        "role": spec["role"],
+        "fleet": "prod",
+        "transport": "zenoh",
+        "workload": spec["workload"],
+        "workspace": "/home/fm/fm",
+    }
+    # Optional on every other card, and omitted rather than emptied: a `robot`
+    # field present but blank is a different card from one that has none, and
+    # only the second is what a recorder rig actually looks like.
+    if "robot" in spec:
+        card["robot"] = spec["robot"]
+    return json.dumps(card)
 
 
 def render(kind: str, profile: str, spec: dict[str, str], workdir: Path) -> str | None:
@@ -195,6 +208,17 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/arm_controller/joint_trajectory"),
         ("subscribers", "/joint_trajectory_controller/joint_trajectory"),
     ],
+    "robot-anvil": [
+        # The two topics that move an Anvil's arms. Both take a command directly
+        # with no limit checking of their own, and the profile stops them by
+        # carrying no subscribers at all — which is a guarantee only as long as
+        # something tests it.
+        ("subscribers", "/commanded_ee_left"),
+        ("subscribers", "/follower_l_forward_position_controller/commands"),
+        # Compressed only. A raw frame is 20-50x the bytes of the compressed one
+        # beside it, and the compressed rule must not widen into it.
+        ("publishers", "/cam_wrist_l/image_raw"),
+    ],
     "processor": [],
     "workstation": [
         # The workstation runs the sim the same way a rig runs an arm, so the
@@ -233,6 +257,14 @@ REQUIRED_TOPICS = {
     "recorder": [("publishers", "/rosout")],
     "processor": [("publishers", "/process/state"), ("subscribers", "/process/start")],
     "robot": [("publishers", "/joint_states")],
+    "robot-anvil": [
+        ("publishers", "/joint_states"),
+        ("publishers", "/hardware_state_controller/state"),
+        ("publishers", "/recording_status"),
+        ("publishers", "/controls_owner"),
+        ("publishers", "/ee_pose_left"),
+        ("publishers", "/cam_wrist_l/image_raw/compressed"),
+    ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [
         ("publishers", "/joint_states"),
@@ -306,6 +338,14 @@ def check_bridge(profile: str, config: dict) -> None:
     for kind, topic in REQUIRED_TOPICS.get(profile, []):
         if not any(matches(pattern, topic) for pattern in allow.get(kind, [])):
             fail(where, f"carries no {kind[:-1]} rule for {topic!r}")
+
+    # The absence rule, graded as an absence. Every other check here reads the
+    # rules a profile carries; this one reads the list an anvil host must not
+    # have at all. Its whole safety property is that no key on the fabric reaches
+    # a DDS writer on the workcell, and one added rule would restore an inbound
+    # path that no forbidden-topic test would notice.
+    if profile == "robot-anvil" and allow.get("subscribers"):
+        fail(where, "carries subscriber rules — an anvil host accepts no inbound topic")
 
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):

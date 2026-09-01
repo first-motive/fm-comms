@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  bridge-cyclonedds-iface.xml.in — the DDS side of a bridge that has to join a
+  graph somebody else pinned.
+
+  The sibling `bridge-cyclonedds.xml` is for a host where every ROS node is
+  localhost-only, which is what fm-ros2 sets and what a Mac cockpit does. A robot
+  supported by its vendor is not that host: the Anvil workcell's stack pins
+  CycloneDDS to one named interface and turns multicast on, and a bridge left on
+  stock selection picks whichever interface comes first — `docker0` on a machine
+  running the vendor's compose project. The two then never discover each other,
+  and nothing reports an error: the bridge starts, connects to the router, routes
+  nothing, and logs no failure.
+
+  So the interface is not guessed. It comes from FM_DDS_IFACE in the host's
+  fm-comms.env, which `fm device adopt` reads off the robot's own vendor config
+  rather than asking anyone to type twice.
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <!-- The one interface the graph this bridge is joining lives on. -->
+      <Interfaces>
+        <NetworkInterface name="${FM_DDS_IFACE}"/>
+      </Interfaces>
+      <!-- On, because the graph being joined uses it. The loopback profile turns
+           it off for the opposite reason: loopback has none. -->
+      <AllowMulticast>true</AllowMulticast>
+    </General>
+    <Discovery>
+      <!-- The ceiling that matters. Unicast discovery needs a distinct
+           participant index per process and the default ceiling is nine — well
+           under what a workcell reaches once its stack, a foxglove bridge, and a
+           handful of `ros2` commands are running. The tenth participant does not
+           degrade, it fails outright. -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

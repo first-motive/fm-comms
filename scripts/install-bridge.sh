@@ -7,7 +7,8 @@
 # machine's identity card and typed nowhere: fm-rec-01 becomes fm_rec_01. Which
 # topics cross depends on what work the machine does, which the card's `workload`
 # names: it selects zenoh/bridge-<profile>.json5 (recorder | processor | robot |
-# workstation | cockpit).
+# workstation | cockpit). A `robot` host whose card also names an anvil `robot`
+# kind takes bridge-robot-anvil.json5 instead — same work, no inbound half.
 #
 # Two service paths, chosen by OS, because the two machines are not alike:
 #
@@ -103,6 +104,14 @@ place_env() {
     run sudo install -m 0644 "$ROOT/systemd/fm-comms.env.example" "$ENV_FILE"
   fi
   [ "$FM_DRY_RUN" = "1" ] && return 0
+  # An unattended run already knows these; a person at a keyboard does not need
+  # to be asked twice. Never overwrites a value someone chose.
+  fm_comms_env_seed FM_ROUTER_ENDPOINT "${FM_ROUTER_ENDPOINT:-}"
+  # Both spellings: this unit exports ROS_DOMAIN_ID from the file, and the
+  # rendered config takes the domain from FM_ROS_DOMAIN_ID. The two are kept
+  # equal so they cannot drift apart.
+  fm_comms_env_seed FM_ROS_DOMAIN_ID "${FM_ROS_DOMAIN_ID:-}"
+  fm_comms_env_seed ROS_DOMAIN_ID "${FM_ROS_DOMAIN_ID:-}"
   local missing
   missing="$(fm_comms_env_unfilled FM_ROUTER_ENDPOINT)"
   [ -z "$missing" ] && return 0
@@ -148,11 +157,40 @@ install_unit_linux() {
   # runs stock discovery — default interface, ~9-participant loopback ceiling —
   # and quietly misses nodes past the ceiling; fm-rec-01's cameras never
   # crossed while every gate line around them stayed green.
+  # Rendered, not copied: a host whose vendor stack pinned CycloneDDS to one
+  # interface needs a bridge on that same interface, and which one is a per-host
+  # fact. See fm_comms_render cyclonedds.
   fm_log "  installing $CONF_DIR/cyclonedds.xml"
-  run sudo install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$CONF_DIR/cyclonedds.xml"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write $CONF_DIR/cyclonedds.xml:"
+    fm_comms_render cyclonedds - || return 1
+  else
+    local dds_tmp
+    dds_tmp="$(mktemp)"
+    fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    # A DDS change moves which graph the bridge can see, so it restarts for the
+    # same reason a config change does. This was safe to ignore while the file
+    # was static and is not now.
+    if fm_file_differs "$dds_tmp" "$CONF_DIR/cyclonedds.xml"; then FM_RENDER_CHANGED=1; fi
+    run sudo install -m 0644 "$dds_tmp" "$CONF_DIR/cyclonedds.xml"
+    rm -f "$dds_tmp"
+  fi
 
+  # Rendered, not copied: the distro the graph was built with and whether that
+  # graph is confined to loopback are both per-host facts. A unit change is also
+  # a reason to restart, which is why FM_RENDER_CHANGED is raised here too.
   fm_log "  installing $UNIT"
-  run sudo install -m 0644 "$ROOT/systemd/$UNIT" "/etc/systemd/system/$UNIT"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write /etc/systemd/system/$UNIT:"
+    fm_comms_render bridge-unit - || return 1
+  else
+    local unit_tmp
+    unit_tmp="$(mktemp)"
+    fm_comms_render bridge-unit "$unit_tmp" || { rm -f "$unit_tmp"; return 1; }
+    if fm_file_differs "$unit_tmp" "/etc/systemd/system/$UNIT"; then FM_RENDER_CHANGED=1; fi
+    run sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/$UNIT"
+    rm -f "$unit_tmp"
+  fi
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "$UNIT"
 
@@ -214,10 +252,23 @@ install_agent_macos() {
   run mkdir -p "$USER_CONF_DIR" "$LOG_DIR" "$(dirname "$AGENT_PLIST")"
   render_config "$USER_CONF_DIR/bridge.json5" || return 1
 
-  # The DDS side, which launchd cannot inherit from a shell. Static, so it is
-  # copied rather than rendered.
+  # The DDS side, which launchd cannot inherit from a shell. Rendered rather than
+  # copied: which interface the graph lives on is a per-host fact (see
+  # fm_comms_render cyclonedds).
   fm_log "  installing $USER_CONF_DIR/cyclonedds.xml"
-  run install -m 0644 "$ROOT/zenoh/bridge-cyclonedds.xml" "$USER_CONF_DIR/cyclonedds.xml"
+  if [ "$FM_DRY_RUN" = "1" ]; then
+    fm_log "  would write $USER_CONF_DIR/cyclonedds.xml:"
+    fm_comms_render cyclonedds - || return 1
+  else
+    local dds_tmp
+    dds_tmp="$(mktemp)"
+    fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
+    # Same reason as the Linux path: a DDS change moves which graph the bridge
+    # can see, and the log should not say "unchanged" when a file just did.
+    if fm_file_differs "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"; then FM_RENDER_CHANGED=1; fi
+    run install -m 0644 "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"
+    rm -f "$dds_tmp"
+  fi
 
   # macOS Local Network privacy, which no error message will mention.
   #

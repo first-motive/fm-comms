@@ -3,8 +3,10 @@
 # install.sh — host-bootstrap front door for fm-comms.
 #
 # Places the Zenoh transport on this host for one role: the router (Rune, the
-# office Mac mini), a bridge (a rig, or a Mac running the cockpit), or a client
-# (a laptop with the CLI tools only). The per-role work lives in
+# office Mac mini), a bridge (a rig, or a Mac running the cockpit), a client
+# (a laptop with the CLI tools only), or an endpoint (a host that talks to the
+# router with no DDS graph to bridge, and so needs the shared env file and
+# nothing else). The per-role work lives in
 # scripts/install-<role>.sh, each runnable standalone; the bridge role dispatches
 # again by OS, to a systemd unit on Linux and a user LaunchAgent on macOS.
 #
@@ -116,7 +118,7 @@ Usage: ./install.sh [install|uninstall] --role <role> [options]
   uninstall    remove what a previous install placed
 
 Options:
-  --role NAME  which role this host plays (router | bridge | client)
+  --role NAME  which role this host plays (router | bridge | client | endpoint)
                bridge covers a Linux rig and a macOS cockpit
   -y, --yes    non-interactive; assume yes (CI mode)
   --dry-run    print what would happen, change nothing
