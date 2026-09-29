@@ -175,6 +175,42 @@ systemd units — same configs, same pinned version:
 ./run.sh compose up -d zenoh-bridge
 ```
 
+## Router operations on macOS
+
+The router runs as the existing `fm` service account (override with
+`FM_COMMS_USER`). The installer refuses root. Its binary and log wrapper live
+under root-owned `/usr/local/bin` and `/usr/local/libexec/fm-comms`.
+The wrapper requires `/usr/bin/python3` and captures stdout and stderr in
+`zenohd.log`, mode 600. Python's standard rotating-file handler keeps five gzip
+archives and rotates at 200 MiB. Rotation does not restart the router or rename
+a file that the router is still writing. Logs can exceed the threshold by one
+bounded read. The log directory is restricted to the service account; operators read logs through sudo.
+Old `.bz2` evidence and the previous stderr log are preserved during migration.
+
+```sh
+./run.sh router-health --json
+./run.sh query-watch
+./run.sh query-watch --live
+```
+
+These commands are read-only. Health reports unavailable measurements explicitly.
+Counts cover the current log file, not uptime; rotation resets that window.
+NTP results include uncertainty. Positive offset means the local clock is behind
+its reference. The installer uses `systemsetup` to select `FM_NTP_SERVER`
+(default `time.apple.com`) and enable network time; this setting alone does not
+prove synchronization.
+
+A timeout warning identifies the responder first and requester second. It does
+not identify the key or application. Read `@/*/router` through a Zenoh client to
+map current session IDs to endpoints, then inspect the owning client or service.
+Do not infer an absent episode service or an idle fleet from a quiet router log.
+
+`fm.json` declares these verbs, but CLI discovery also requires `fm-comms` in
+that CLI version's repository registry. Use the checkout commands above when
+it is not registered. Reinstallation restarts the router: confirm fleet idle
+before applying, retain the old plist/config/binary, and verify both listeners
+and a real client query afterwards. No scheduled restart is installed.
+
 ## Episodes
 
 A processor rig also serves the recorder's episodes over Zenoh, so the desktop or

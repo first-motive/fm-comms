@@ -116,30 +116,64 @@ install_unit_linux() {
 # reports why a job was refused, where `load` exits 0 on a plist launchd then
 # ignores — which is a router that looks installed and is not running.
 install_daemon_macos() {
-  fm_log "  installing $PLIST"
-  run sudo mkdir -p "$LOG_DIR"
-
+  local router_user src_bin tmp
+  router_user="$(fm_comms_router_user)"
+  if [ "$FM_DRY_RUN" != "1" ]; then
+    id "$router_user" >/dev/null || { fm_err "missing router account: $router_user"; return 1; }
+    [ "$(id -u "$router_user")" != 0 ] || { fm_err "router account must not be root"; return 1; }
+    /usr/bin/python3 --version >/dev/null || return 1
+  fi
+  # Select the newly pinned download, not an older service binary on PATH.
+  src_bin="$FM_MACOS_BIN_DIR/zenohd"
+  if [ ! -x "$src_bin" ] || [ "$(fm_zenoh_version_at "$src_bin")" != "$(fm_zenoh_version)" ]; then
+    src_bin="$(fm_zenohd_bin)"
+  fi
+  if [ "$FM_DRY_RUN" != "1" ]; then
+    [ "$(fm_zenoh_version_at "$src_bin")" = "$(fm_zenoh_version)" ] || return 1
+  fi
+  run sudo install -d -m 0755 -o root -g wheel /usr/local/bin /usr/local/libexec/fm-comms
+  if [ "$src_bin" != /usr/local/bin/zenohd ]; then
+    run sudo install -m 0755 -o root -g wheel "$src_bin" /usr/local/bin/zenohd
+  fi
+  run sudo install -m 0644 -o root -g wheel "$ROOT/scripts/service/router.py" /usr/local/libexec/fm-comms/router.py
+  run sudo install -d -m 0700 -o "$router_user" -g wheel "$LOG_DIR"
+  # Open relative to a directory descriptor: fm owns these names and can replace
+  # them during migration. Never follow links or chmod a multiply-linked file.
+  run sudo /usr/bin/python3 - "$LOG_DIR" "$router_user" <<'PYLOG'
+import grp, os, pwd, stat, sys
+folder = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for name in os.listdir(folder):
+        if not (name.startswith("zenohd") and (name.endswith(".log") or name.startswith("zenohd.log."))):
+            continue
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=folder)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError("refusing non-regular or linked log: " + name)
+            os.fchown(fd, pwd.getpwnam(sys.argv[2]).pw_uid, grp.getgrnam("wheel").gr_gid)
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+finally:
+    os.close(folder)
+PYLOG
+  # The wrapper owns rotation of both streams. A separate rename or scheduled
+  # restart would bypass it. Remove only the obsolete files this installer owns.
+  run sudo launchctl bootout system/ai.firstmotive.zenohd-logrotate 2>/dev/null || true
+  run sudo rm -f /Library/LaunchDaemons/ai.firstmotive.zenohd-logrotate.plist /etc/newsyslog.d/fm-comms.conf
+  export FM_ZENOHD_BIN=/usr/local/bin/zenohd
   if [ "$FM_DRY_RUN" = "1" ]; then
-    fm_log "  would write $PLIST:"
     fm_comms_render launchd - || return 1
   else
-    local tmp; tmp="$(mktemp)"
+    tmp="$(mktemp)"
     fm_comms_render launchd "$tmp" || { rm -f "$tmp"; return 1; }
-    # Owned by root and not group-writable, or launchd refuses to load it.
     sudo install -m 0644 -o root -g wheel "$tmp" "$PLIST"
     rm -f "$tmp"
   fi
-
-  # An existing job holds the port, so it is taken out first. It may legitimately
-  # not be loaded, which is not a failure worth stopping the install for.
-  #
-  # This pair is also the router's restart: bootout ends the running daemon and
-  # bootstrap starts one that reads the config rendered above, so a reinstall on
-  # this path never leaves the old process behind the way a bare
-  # `systemctl enable --now` does.
   run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
   run sudo launchctl bootstrap system "$PLIST"
-  fm_log "  watch it with: tail -f $LOG_DIR/zenohd.log"
+  fm_log "  bounded stdout and stderr: $LOG_DIR/zenohd.log (200 MiB, 5 gzip archives)"
 }
 
 # Check what the router actually bound, not whether the service manager exited 0.
@@ -240,6 +274,13 @@ do_install() {
 
   fm_log "Installing the Zenoh router (zenoh $version) on $os"
 
+  if [ "$os" = macos ]; then
+    # systemsetup is the supported configuration API. A successful setting is
+    # not proof of synchronization; router-health reports offset and uncertainty.
+    run sudo /usr/sbin/systemsetup -setnetworktimeserver "${FM_NTP_SERVER:-time.apple.com}"
+    run sudo /usr/sbin/systemsetup -setusingnetworktime on
+  fi
+
   case "$os" in
     linux) install_linux "$version" ;;
     macos) install_macos "$version" ;;
@@ -249,6 +290,11 @@ do_install() {
 
   fm_log "  rendering $CONF_DIR/router.json5"
   run sudo mkdir -p "$CONF_DIR"
+
+  # The config must be readable by the service account (fm) without being
+  # writable. root:wheel, 644 satisfies both; the daemon reads it at startup.
+  if [ "$os" = macos ]; then run sudo chown root:wheel "$CONF_DIR"; fi
+  run sudo chmod 755 "$CONF_DIR"
   if [ "$FM_DRY_RUN" = "1" ]; then
     # Print the config rather than describing it: a dry run whose only output is
     # "would render X" cannot catch the mistake the render itself would make.
@@ -288,6 +334,7 @@ do_uninstall() {
   else
     run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
     run sudo rm -f "$PLIST"
+    run sudo rm -f /usr/local/libexec/fm-comms/router.py
     # The logs outlive the job on purpose: the reason a router was removed is
     # usually in them, and this is the moment someone wants to read it.
     fm_log "  left in place: $LOG_DIR"

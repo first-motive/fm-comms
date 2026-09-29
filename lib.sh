@@ -460,7 +460,7 @@ fm_zenohd_bin() {
     printf '%s\n' "$found"; return 0
   }
   local prefix
-  for prefix in "$HOME/.local" /opt/homebrew /usr/local; do
+  for prefix in /usr/local "$HOME/.local" /opt/homebrew; do
     [ -x "$prefix/bin/zenohd" ] && { printf '%s\n' "$prefix/bin/zenohd"; return 0; }
   done
   fm_err "zenohd is not on this host — install it first (./install.sh --role router)"
@@ -615,6 +615,23 @@ fm_comms_resolve() {
   export FM_RIG_NAMESPACE FM_EPISODES_DIR FM_ROUTER_PORT FM_ROS_DOMAIN_ID
 }
 
+# fm_comms_router_user — echo the account the router daemon runs as.
+#
+# Taken from the card's optional `router_user`, else defaults to `fm`. The
+# card is the right place for this: like every other host-specific fact this
+# repo renders, the service account is per-host and must not be typed into a
+# template. A missing field is not an error — `fm` is the fleet-standard
+# choice, so a card that does not override it still works.
+#
+# FM_COMMS_USER overrides both, which lets a bench install target a different
+# account without editing the card.
+fm_comms_router_user() {
+  [ -n "${FM_COMMS_USER:-}" ] && { printf '%s\n' "$FM_COMMS_USER"; return 0; }
+  local u
+  u="$(fm_machine_get_opt router_user)" && [ -n "$u" ] && { printf '%s\n' "$u"; return 0; }
+  printf 'fm\n'
+}
+
 # Echo the bridge profile this machine runs: recorder | processor | robot |
 # robot-anvil | workstation | cockpit.
 #
@@ -753,9 +770,9 @@ fm_comms_render() {
       # so `./run.sh render launchd` shows exactly what an install would load —
       # a plist that can only be inspected by loading it is how a Mac ends up
       # running a daemon nobody can account for.
-      FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-$(fm_zenohd_bin)}" \
+      FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-/usr/local/bin/zenohd}" \
       FM_ROUTER_CONFIG="${FM_ROUTER_CONFIG:-$FM_COMMS_CONF_DIR/router.json5}" \
-      FM_COMMS_USER="${FM_COMMS_USER:-${SUDO_USER:-$USER}}" \
+      FM_COMMS_USER="${FM_COMMS_USER:-$(fm_comms_router_user)}" \
       FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}" \
         fm_render_template "$root/launchd/$FM_LAUNCHD_LABEL.plist.in" "$dest" \
           FM_ZENOHD_BIN FM_ROUTER_CONFIG FM_COMMS_USER FM_COMMS_LOG_DIR

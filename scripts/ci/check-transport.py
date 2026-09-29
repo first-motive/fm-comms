@@ -32,6 +32,7 @@ Run it the same way CI does::
 from __future__ import annotations
 
 import json
+import gzip
 import os
 import re
 import subprocess
@@ -366,6 +367,43 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
+
+        (workdir / "zenohd.log").write_text(
+            "2026-01-01T00:00:00Z WARN south:0:client/bb:3:2 Didn't receive final reply for query south:0:client/aa:6:9: Timeout(5s)!\n"
+        )
+        query_log = subprocess.run(
+            ["bash", str(ROOT / "scripts/query-watch.sh")],
+            env={**os.environ, "FM_COMMS_LOG_DIR": str(workdir)},
+            capture_output=True, text=True, timeout=10,
+        )
+        if query_log.returncode or "requester=aa responder=bb" not in query_log.stdout:
+            fail("query watch", "requester and responder must follow Zenoh's warning format")
+
+        # Exercise the real service wrapper: rotation must preserve both streams
+        # from one uninterrupted child and propagate its exit status.
+        log = workdir / "router.log"
+        child = "import os,sys; [(print(f'{os.getpid()} out {i:03d}'), print(f'{os.getpid()} err {i:03d}', file=sys.stderr)) for i in range(100)]; sys.exit(7)"
+        run = subprocess.run([
+            sys.executable, str(ROOT / "scripts/service/router.py"),
+            "--log", str(log), "--max-bytes", "1024", "--backups", "5", "--",
+            sys.executable, "-u", "-c", child,
+        ], capture_output=True, text=True, timeout=20)
+        if run.returncode != 7:
+            fail("router service", f"child exit status lost: {run.returncode}: {run.stderr}")
+        else:
+            lines = log.read_text().splitlines()
+            archives = list(workdir.glob("router.log.*.gz"))
+            for archive in archives:
+                with gzip.open(archive, "rt") as stream:
+                    lines.extend(stream.read().splitlines())
+            if not archives or len(lines) != 200 or len({line.split()[0] for line in lines}) != 1:
+                fail("router service", "rotation lost records or restarted the child")
+            observed = {" ".join(line.split()[1:]) for line in lines}
+            expected = {f"{stream} {i:03d}" for stream in ("out", "err") for i in range(100)}
+            if observed != expected:
+                fail("router service", "stdout/stderr records changed across rotation")
+            if any(path.stat().st_mode & 0o007 for path in [log, *archives]):
+                fail("router service", "logs are world-accessible")
 
         rendered = render("router", "router", CARDS["router"], workdir)
         if rendered is not None:
