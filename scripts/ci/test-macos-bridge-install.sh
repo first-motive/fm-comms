@@ -98,6 +98,24 @@ else
   fail "an empty version reading offers no cause"
 fi
 
+echo "== a client Mac is told where the router is =="
+# `fm robot` and `z_sub` on a Mac read FM_ROUTER_ENDPOINT from the env file, and
+# the client role used to place none: on 2026-09-29 the CLI could not reach
+# fm-rob-01 until the endpoint was exported by hand for every command.
+client_out="$(HOME="$WORK/home" FM_COMMS_ENV_FILE="$WORK/absent.env" ./install.sh --role client --dry-run 2>&1)"
+if grep -q "placing $WORK/absent.env from the example" <<<"$client_out"; then
+  pass "a client install places the fleet env file"
+else
+  fail "a client install leaves the Mac with no router endpoint"
+  printf '%s\n' "$client_out" | tail -4 | sed 's/^/       /'
+fi
+client_kept="$(HOME="$WORK/home" FM_COMMS_ENV_FILE="$WORK/tailnet.env" ./install.sh --role client --dry-run 2>&1)"
+if grep -q "$WORK/tailnet.env exists; leaving it alone" <<<"$client_kept"; then
+  pass "a client install keeps an env file someone already filled"
+else
+  fail "a client install does not respect an existing env file"
+fi
+
 echo
 if [[ "$fails" -gt 0 ]]; then
   echo "$fails check(s) failed"
