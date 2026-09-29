@@ -181,10 +181,10 @@ The router runs as the existing `fm` service account (override with
 `FM_COMMS_USER`). The installer refuses root. Its binary and log wrapper live
 under root-owned `/usr/local/bin` and `/usr/local/libexec/fm-comms`.
 The wrapper requires `/usr/bin/python3` and captures stdout and stderr in
-`zenohd.log`, mode 640. Python's standard rotating-file handler keeps five gzip
+`zenohd.log`, mode 600. Python's standard rotating-file handler keeps five gzip
 archives and rotates at 200 MiB. Rotation does not restart the router or rename
 a file that the router is still writing. Logs can exceed the threshold by one
-bounded read. The log directory is restricted to the service account and staff.
+bounded read. The log directory is restricted to the service account; operators read logs through sudo.
 Old `.bz2` evidence and the previous stderr log are preserved during migration.
 
 ```sh

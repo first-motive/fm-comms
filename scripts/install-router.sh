@@ -136,7 +136,7 @@ install_daemon_macos() {
     run sudo install -m 0755 -o root -g wheel "$src_bin" /usr/local/bin/zenohd
   fi
   run sudo install -m 0644 -o root -g wheel "$ROOT/scripts/service/router.py" /usr/local/libexec/fm-comms/router.py
-  run sudo install -d -m 0750 -o "$router_user" -g staff "$LOG_DIR"
+  run sudo install -d -m 0700 -o "$router_user" -g wheel "$LOG_DIR"
   # Open relative to a directory descriptor: fm owns these names and can replace
   # them during migration. Never follow links or chmod a multiply-linked file.
   run sudo /usr/bin/python3 - "$LOG_DIR" "$router_user" <<'PYLOG'
@@ -151,8 +151,8 @@ try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise RuntimeError("refusing non-regular or linked log: " + name)
-            os.fchown(fd, pwd.getpwnam(sys.argv[2]).pw_uid, grp.getgrnam("staff").gr_gid)
-            os.fchmod(fd, 0o640)
+            os.fchown(fd, pwd.getpwnam(sys.argv[2]).pw_uid, grp.getgrnam("wheel").gr_gid)
+            os.fchmod(fd, 0o600)
         finally:
             os.close(fd)
 finally:

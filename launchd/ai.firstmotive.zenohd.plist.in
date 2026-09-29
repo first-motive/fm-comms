@@ -61,7 +61,7 @@
 
   <!-- The wrapper owns both log streams. launchd reports supervisor failures through its exit status. -->
   <key>Umask</key>
-  <integer>23</integer>
+  <integer>63</integer>
 
   <key>ProcessType</key>
   <string>Background</string>

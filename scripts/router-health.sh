@@ -195,12 +195,12 @@ if [ -r "$LOG_FILE" ]; then
   else
     result pass "log-size" "${size_mb} MB"
   fi
-  # Permission: should be 640 (owner read/write, group read, world none)
+  # Permission: should be 600 (service owner only; operators use sudo)
   perms=$(stat -f%Lp "$LOG_FILE" 2>/dev/null || echo "?")
-  if [ "$perms" = "640" ]; then
-    result pass "log-perms" "mode 640"
+  if [ "$perms" = "600" ]; then
+    result pass "log-perms" "mode 600"
   else
-    result warn "log-perms" "mode $perms (expected 640)"
+    result warn "log-perms" "mode $perms (expected 600)"
   fi
 elif [ -e "$LOG_FILE" ]; then
   result unavailable "log-size" "log exists but is not readable by this user"

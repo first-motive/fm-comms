@@ -33,7 +33,7 @@ def main():
     if not command or args.max_bytes < 1024 or args.backups < 1:
         parser.error("a command, max-bytes >= 1024, and backups >= 1 are required")
 
-    os.umask(0o027)
+    os.umask(0o077)
     log = Path(args.log)
     # A second supervisor must not rotate the first one's output.
     with open(str(log) + ".lock", "a") as lock:
