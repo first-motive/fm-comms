@@ -14,9 +14,16 @@
 
 set -euo pipefail
 
+case "${1:-}" in
+  --help|-h) echo "Usage: router-health [--json] (macOS router, read-only)"; exit 0 ;;
+  ""|--json) ;;
+  *) echo "unknown argument: $1" >&2; exit 2 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib.sh disable=SC1091
 . "$ROOT/lib.sh"
+fm_comms_load_env
 
 LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}"
 LOG_FILE="$LOG_DIR/zenohd.log"
@@ -46,10 +53,10 @@ result() {
 # --- 1. Process running -------------------------------------------------------
 
 pid=""
-pid=$(pgrep -d ' ' -f "zenohd.*router.json5" 2>/dev/null | awk '{print $1}') || true
+pid=$(pgrep -x zenohd 2>/dev/null | head -1) || true
 if [ -n "$pid" ]; then
-  uptime_secs=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ') || uptime_secs="?"
-  result pass "process" "pid=$pid uptime=${uptime_secs}s"
+  uptime_secs=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ') || uptime_secs="?"
+  result pass "process" "pid=$pid uptime=$uptime_secs"
 else
   result fail "process" "zenohd not running (label: $LABEL)"
 fi
@@ -104,6 +111,8 @@ fi
 
 if [ -n "$running_exe" ] && [ "$running_exe" != "$canonical_bin" ]; then
   result fail "version" "running from $running_exe, expected $canonical_bin"
+elif [ -z "$running_exe" ]; then
+  result unavailable "version" "running executable unavailable"
 elif [ -n "$canonical_ver" ] && [ "$canonical_ver" = "$pinned" ]; then
   note=""
   [ -n "$running_exe" ] && note=" (exe=$running_exe)"
@@ -176,14 +185,13 @@ else
 fi
 
 # --- 7. Log file accessible and below rotation threshold ----------------------
-# 200 MB is the newsyslog rotation threshold, not a hard ceiling.
-# The file may exceed it between rotation runs.
+# The service wrapper rotates both output streams at 200 MiB, retaining five gzip archives.
 
 if [ -r "$LOG_FILE" ]; then
-  size_bytes=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+  size_bytes=$(stat -f%z "$LOG_FILE")
   size_mb=$(python3 -c "print(f'{$size_bytes/1048576:.1f}')" 2>/dev/null || echo "?")
   if [ "$size_bytes" -gt 209715200 ]; then
-    result warn "log-size" "${size_mb} MB — above 200 MB rotation threshold (rotation pending)"
+    result warn "log-size" "${size_mb} MB — above 200 MB rotation threshold (check service wrapper)"
   else
     result pass "log-size" "${size_mb} MB"
   fi
@@ -207,37 +215,29 @@ fi
 # synchronized. We measure offset and report uncertainty.
 # Warn on timeout; warn on high offset; note uncertainty in the detail.
 
-ntp_pass=0
-ntp_fail=0
-ntp_offsets=()
-for attempt in 1 2 3; do
-  probe=$(sntp -t 2 time.apple.com 2>/dev/null) || { ntp_fail=$((ntp_fail+1)); continue; }
-  off=$(printf '%s' "$probe" | grep -oE '^[+-][0-9]+\.[0-9]+') || { ntp_fail=$((ntp_fail+1)); continue; }
-  ntp_offsets+=("$off")
-  ntp_pass=$((ntp_pass+1))
-done
-
-if [ ${#ntp_offsets[@]} -eq 0 ]; then
-  result warn "clock" "all $ntp_fail sntp probes timed out — NTP state unknown"
-else
-  # Use the first successful probe offset (nearest-recent)
-  offset="${ntp_offsets[0]}"
-  abs_offset=$(python3 -c "print(abs($offset))" 2>/dev/null || echo "9")
-  ok=$(python3 -c "print('yes' if abs($offset) < 0.1 else 'no')" 2>/dev/null || echo "no")
-  extra=""
-  [ "$ntp_fail" -gt 0 ] && extra=" ($ntp_fail/$((ntp_pass+ntp_fail)) probes timed out)"
-  # Note: offset alone does not confirm timed is synced; also check com.apple.timed state
-  timed_state=$(launchctl print system/com.apple.timed 2>/dev/null | awk '/^[[:space:]]*state = /{print $3; exit}') \
-    || timed_state=$(sudo -n launchctl print system/com.apple.timed 2>/dev/null | awk '/^[[:space:]]*state = /{print $3; exit}') \
-    || timed_state=""
-  timed_note=""
-  [ -n "$timed_state" ] && timed_note=" timed=$timed_state"
-  if [ "$ok" = "yes" ]; then
-    result pass "clock" "offset=${offset}s vs time.apple.com${timed_note}${extra}"
-  else
-    result warn "clock" "offset=${offset}s (>100ms; Zenoh 500ms budget partially consumed)${timed_note}${extra}"
-  fi
-fi
+clock_result=$(python3 - <<'PY_CLOCK'
+import re, subprocess
+measurements = []
+failed = 0
+for _ in range(3):
+    try:
+        result = subprocess.run(["sntp", "-t", "2", "time.apple.com"], capture_output=True, text=True, timeout=5)
+        match = re.search(r"^([+-][0-9.]+) \+/- ([0-9.]+)", result.stdout, re.M)
+        if result.returncode or not match:
+            failed += 1
+            continue
+        measurements.append(tuple(map(float, match.groups())))
+    except (OSError, subprocess.TimeoutExpired):
+        failed += 1
+if not measurements:
+    print("unavailable|no successful NTP measurement")
+else:
+    level = "pass" if not failed and all(abs(o) + e < 0.1 for o, e in measurements) else "warn"
+    detail = "; ".join(f"{o:+.6f}s +/- {e:.6f}s" for o, e in measurements)
+    print(f"{level}|server-minus-local: {detail}; failed probes={failed}/3; positive means local clock is behind")
+PY_CLOCK
+)
+result "${clock_result%%|*}" "clock" "${clock_result#*|}"
 
 # --- 9. Timestamp replacement count ------------------------------------------
 # Reports counts for the current log only; a fresh log after a restart starts at 0.
@@ -262,18 +262,28 @@ if [ "$log_readable" -eq 0 ]; then
   result unavailable "ts-replacements" "log not readable"
   result unavailable "query-timeouts" "log not readable"
 else
-  if [ "$ts_count" -gt 10000 ]; then
+  if [ "$ts_count" -gt 0 ]; then
     result warn "ts-replacements" "${ts_count} in current log (cause unconfirmed; check publisher and router clock sync)"
   else
-    result pass "ts-replacements" "${ts_count} (observation window: since last restart only)"
+    result pass "ts-replacements" "${ts_count} (observation window: current file only; rotation resets counts)"
   fi
 
   # query-timeouts: report count without claiming a cause
-  if [ "$qt_count" -gt 50 ]; then
+  if [ "$qt_count" -gt 0 ] || [ "$qt_qnf" -gt 0 ]; then
     result warn "query-timeouts" "${qt_count} final-reply timeouts, ${qt_qnf} not-found (requester/key/responder unidentified)"
   else
     result pass "query-timeouts" "${qt_count} final-reply timeouts, ${qt_qnf} not-found (current log only)"
   fi
+fi
+
+if [ -r "$FM_COMMS_CONF_DIR/router.json5" ]; then
+  if diff -q <(fm_comms_render router -) "$FM_COMMS_CONF_DIR/router.json5" >/dev/null; then
+    result pass "config" "installed router config matches render"
+  else
+    result fail "config" "installed router config differs from render"
+  fi
+else
+  result unavailable "config" "installed router config not readable"
 fi
 
 # --- output ------------------------------------------------------------------

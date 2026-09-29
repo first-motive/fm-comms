@@ -18,7 +18,7 @@
   next job and is unreachable in the meantime.
 
   Placeholders:
-    FM_ZENOHD_BIN       absolute path to zenohd, from the brew prefix
+    FM_ZENOHD_BIN       absolute path to zenohd, root-owned service binary
     FM_ROUTER_CONFIG    the rendered router.json5
     FM_COMMS_USER       the account the daemon runs as (nothing here needs root)
     FM_COMMS_LOG_DIR    where stdout and stderr land
@@ -30,13 +30,18 @@
 
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/python3</string>
+    <string>/usr/local/libexec/fm-comms/router.py</string>
+    <string>--log</string>
+    <string>${FM_COMMS_LOG_DIR}/zenohd.log</string>
+    <string>--</string>
     <string>${FM_ZENOHD_BIN}</string>
     <string>--config</string>
     <string>${FM_ROUTER_CONFIG}</string>
   </array>
 
   <!-- The router terminates transports and reads no robot data; it needs no
-       privilege, so it drops to the account that installed it. -->
+       privilege, so it runs as the configured non-root service account. -->
   <key>UserName</key>
   <string>${FM_COMMS_USER}</string>
 
@@ -54,10 +59,9 @@
   <key>ThrottleInterval</key>
   <integer>10</integer>
 
-  <key>StandardOutPath</key>
-  <string>${FM_COMMS_LOG_DIR}/zenohd.log</string>
-  <key>StandardErrorPath</key>
-  <string>${FM_COMMS_LOG_DIR}/zenohd.err.log</string>
+  <!-- The wrapper owns both log streams. launchd reports supervisor failures through its exit status. -->
+  <key>Umask</key>
+  <integer>23</integer>
 
   <key>ProcessType</key>
   <string>Background</string>

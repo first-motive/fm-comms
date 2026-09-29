@@ -1,4 +1,5 @@
 {
+  "version": 1,
   "commands": {
     "router-health": {
       "script": "scripts/router-health.sh",

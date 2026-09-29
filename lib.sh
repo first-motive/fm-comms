@@ -770,7 +770,7 @@ fm_comms_render() {
       # so `./run.sh render launchd` shows exactly what an install would load —
       # a plist that can only be inspected by loading it is how a Mac ends up
       # running a daemon nobody can account for.
-      FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-$(fm_zenohd_bin)}" \
+      FM_ZENOHD_BIN="${FM_ZENOHD_BIN:-/usr/local/bin/zenohd}" \
       FM_ROUTER_CONFIG="${FM_ROUTER_CONFIG:-$FM_COMMS_CONF_DIR/router.json5}" \
       FM_COMMS_USER="${FM_COMMS_USER:-$(fm_comms_router_user)}" \
       FM_COMMS_LOG_DIR="${FM_COMMS_LOG_DIR:-$FM_COMMS_LOG_DIR_DEFAULT}" \
