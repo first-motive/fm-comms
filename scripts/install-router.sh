@@ -116,8 +116,78 @@ install_unit_linux() {
 # reports why a job was refused, where `load` exits 0 on a plist launchd then
 # ignores — which is a router that looks installed and is not running.
 install_daemon_macos() {
+  local router_user
+  router_user="$(fm_comms_router_user)"
+  fm_log "  router will run as: $router_user"
   fm_log "  installing $PLIST"
+
+  # The service account needs to execute zenohd and write the log files, but
+  # should never be able to replace the binary. /usr/local/bin is root-owned
+  # and world-executable: the daemon can run it without owning it.
+  fm_log "  installing zenohd to /usr/local/bin"
+  local src_bin
+  src_bin="$(fm_zenohd_bin)"
+  run sudo install -m 0755 -o root -g wheel "$src_bin" /usr/local/bin/zenohd
+
+  # Pin the render to the path we just installed, not whatever command -v finds.
+  # Without this the render step calls fm_zenohd_bin again, which is PATH-dependent
+  # and would find ~/.local/bin/zenohd on a developer machine where both paths exist.
+  FM_ZENOHD_BIN=/usr/local/bin/zenohd
+  export FM_ZENOHD_BIN
+
+  # Also install any dylib plugins beside the binary (the REST and storage
+  # manager plugins ship in the same zip; they stay near the binary so the
+  # loader finds them without a search-path override).
+  local src_dir
+  src_dir="$(dirname "$src_bin")"
+  for dylib in "$src_dir"/*.dylib; do
+    [ -f "$dylib" ] || continue
+    run sudo install -m 0755 -o root -g wheel "$dylib" /usr/local/lib/ 2>/dev/null || true
+  done
+
+  # The log directory is owned by the service account. The daemon writes only
+  # its own stdout/stderr here; no other account needs write access. Mode 750
+  # (owner rwx, group rx for staff, world nothing) keeps the fleet topology
+  # and peer IDs out of every other user on this host.
   run sudo mkdir -p "$LOG_DIR"
+  run sudo chown -R "${router_user}:staff" "$LOG_DIR"
+  run sudo chmod -R 750 "$LOG_DIR"
+  # Existing log files inherit the new permission without a restart.
+  run sudo chmod 640 "$LOG_DIR"/*.log 2>/dev/null || true
+
+  # Bounded log rotation: 200 MB ceiling, keep 5 compressed rotations. The
+  # router writes one line per data sample routed; without a limit, the log
+  # fills the disk silently, as seen on Rune (404 MB in 34 days). The 200 MB
+  # ceiling leaves room to notice and rotate before the disk is full; the five
+  # compressed archives give 26+ days of history at observed rates.
+  #
+  # mode 640: the log is owned by the service account, readable only by staff
+  # (the operator group) and nobody else. The newsyslog rule must match the
+  # mode the daemon writes, so it is set here alongside the log dir.
+  if [ "$(fm_detect_os)" = macos ]; then
+    local nslog_dir=/etc/newsyslog.d
+    local nslog_conf="$nslog_dir/fm-comms.conf"
+    if [ "$FM_DRY_RUN" = "1" ]; then
+      fm_log "  would write $nslog_conf"
+    else
+      run sudo mkdir -p "$nslog_dir"
+      # newsyslog.conf(5) columns: logfile owner:group mode count size when flags
+      # J = compress with bzip2; G = treat logfile as a glob (unused, but safe)
+      # size 204800 = 200 MB; count 5 = keep 5 rotated copies; when empty = no
+      # time-based rotation (size-only); pid/sig fields omitted = signal not sent
+      # on rotation (zenohd reopens stdout via launchd, not a pid file).
+      printf '%s %s %s %s %s %s %s\n' \
+        "$LOG_DIR/zenohd.log" \
+        "${router_user}:staff" \
+        "640" \
+        "5" \
+        "204800" \
+        "*" \
+        "Z" | run sudo tee "$nslog_conf" >/dev/null
+      run sudo chmod 0644 "$nslog_conf"
+      fm_log "  rotation rule: $nslog_conf (200 MB, 5 compressed copies, mode 640)"
+    fi
+  fi
 
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would write $PLIST:"
@@ -139,7 +209,28 @@ install_daemon_macos() {
   # `systemctl enable --now` does.
   run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
   run sudo launchctl bootstrap system "$PLIST"
-  fm_log "  watch it with: tail -f $LOG_DIR/zenohd.log"
+
+  # Install the daily log-rotation companion. It rotates the log and restarts
+  # the router so launchd reopens the log path — without this, launchd keeps
+  # zenohd's stdout fd pointing at the renamed file after newsyslog moves it.
+  local rotate_plist_in="$ROOT/launchd/ai.firstmotive.zenohd-logrotate.plist.in"
+  local rotate_plist="/Library/LaunchDaemons/ai.firstmotive.zenohd-logrotate.plist"
+  if [ -f "$rotate_plist_in" ]; then
+    if [ "$FM_DRY_RUN" = "1" ]; then
+      fm_log "  would install log-rotation companion: $rotate_plist"
+    else
+      local rtmp; rtmp="$(mktemp)"
+      FM_COMMS_LOG_DIR="$LOG_DIR" \
+        fm_render_template "$rotate_plist_in" "$rtmp" FM_COMMS_LOG_DIR
+      run sudo install -m 0644 -o root -g wheel "$rtmp" "$rotate_plist"
+      rm -f "$rtmp"
+      run sudo launchctl bootout "system/ai.firstmotive.zenohd-logrotate" 2>/dev/null || true
+      run sudo launchctl bootstrap system "$rotate_plist"
+      fm_log "  log-rotation companion installed (runs at 00:05 daily)"
+    fi
+  fi
+
+  fm_log "  watch it with: sudo -u $router_user tail -f $LOG_DIR/zenohd.log"
 }
 
 # Check what the router actually bound, not whether the service manager exited 0.
@@ -240,6 +331,24 @@ do_install() {
 
   fm_log "Installing the Zenoh router (zenoh $version) on $os"
 
+  # On macOS the router is the clock reference for the fleet's Zenoh HLC timestamps.
+  # Set an explicit NTP server so timed syncs reliably. Without this, macOS timed
+  # runs but systemsetup -getnetworktimeserver reports (null) and the clock may drift.
+  # A router clock that is fast by 400+ ms leaves publishers only ~100 ms before their
+  # timestamps are rejected. This is a best-effort write: the kickstart of timed is
+  # blocked by SIP, so the next sync cycle applies the setting, not this instant.
+  if [ "$os" = macos ]; then
+    if [ "${FM_DRY_RUN:-0}" = "1" ]; then
+      fm_log "  would set NTP server: time.apple.com"
+    else
+      fm_log "  setting NTP server: time.apple.com"
+      sudo defaults write /Library/Preferences/com.apple.timed NTPServer -string "time.apple.com" 2>/dev/null \
+        && sudo defaults write /Library/Preferences/com.apple.timed TMAutomaticTimeOnlyEnabled -bool true 2>/dev/null \
+        && fm_log "  NTP server set (timed will apply on next sync cycle)" \
+        || fm_warn "  could not set NTP server (non-fatal: sync check reported$(sntp -t 2 time.apple.com 2>/dev/null | grep -oE '^[+-][0-9]+\.[0-9]+' | head -1 || echo ' unavailable')s offset)"
+    fi
+  fi
+
   case "$os" in
     linux) install_linux "$version" ;;
     macos) install_macos "$version" ;;
@@ -249,6 +358,11 @@ do_install() {
 
   fm_log "  rendering $CONF_DIR/router.json5"
   run sudo mkdir -p "$CONF_DIR"
+
+  # The config must be readable by the service account (fm) without being
+  # writable. root:wheel, 644 satisfies both; the daemon reads it at startup.
+  run sudo chown root:wheel "$CONF_DIR"
+  run sudo chmod 755 "$CONF_DIR"
   if [ "$FM_DRY_RUN" = "1" ]; then
     # Print the config rather than describing it: a dry run whose only output is
     # "would render X" cannot catch the mistake the render itself would make.

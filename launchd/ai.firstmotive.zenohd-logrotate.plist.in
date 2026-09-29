@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ai.firstmotive.zenohd-logrotate — daily log rotation for the Zenoh router.
+
+  A TEMPLATE, hence the .in suffix. install-router.sh renders it and places it at
+  /Library/LaunchDaemons/ai.firstmotive.zenohd-logrotate.plist.
+
+  This job exists because launchd holds zenohd's stdout fd open by path. After
+  newsyslog renames zenohd.log to zenohd.log.0, zenohd keeps writing to the
+  renamed file (old inode). The new empty zenohd.log does not grow until the
+  daemon is restarted. This daemon:
+
+    1. Runs newsyslog against our rule, rotating if the file exceeds the threshold.
+    2. Restarts zenohd (launchctl kickstart -k), which causes launchd to re-exec
+       the daemon and reopen the log path against the new file.
+
+  The restart is safe. zenohd is a stateless message router. launchd's KeepAlive
+  flag means it would restart on any crash; a deliberate daily kickstart is not
+  more disruptive. Peers reconnect automatically (each bridge has KeepAlive too).
+
+  Runs at 00:05 — five minutes after newsyslog's own midnight run — so the
+  threshold check and rotate happen before the restart.
+
+  Placeholders:
+    FM_COMMS_LOG_DIR   where the newsyslog config and log live
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.firstmotive.zenohd-logrotate</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <!-- Run newsyslog against our rule. If it rotated the file, restart zenohd so
+         launchd reopens the log path. kickstart -k terminates the running daemon;
+         launchd's KeepAlive immediately starts a fresh one. -->
+    <string>/usr/sbin/newsyslog -f /etc/newsyslog.d/fm-comms.conf \
+      &amp;&amp; /bin/launchctl kickstart -k system/ai.firstmotive.zenohd</string>
+  </array>
+
+  <!-- Root is required to run newsyslog and to launchctl kickstart a system service. -->
+  <!-- This is the minimum privilege needed; it does not touch the router config. -->
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>0</integer>
+    <key>Minute</key>
+    <integer>5</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenohd-logrotate.log</string>
+  <key>StandardErrorPath</key>
+  <string>${FM_COMMS_LOG_DIR}/zenohd-logrotate.err.log</string>
+</dict>
+</plist>

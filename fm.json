@@ -1,0 +1,12 @@
+{
+  "commands": {
+    "router-health": {
+      "script": "scripts/router-health.sh",
+      "help": "read-only health check: process, listeners, clock, log size, errors"
+    },
+    "query-watch": {
+      "script": "scripts/query-watch.sh",
+      "help": "show query timeout pairs; --live tails the log for new events"
+    }
+  }
+}
