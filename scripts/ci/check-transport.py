@@ -198,6 +198,10 @@ def check_router(config: dict) -> None:
 # admit /head/color/image_raw".
 FORBIDDEN_TOPICS = {
     "recorder": [
+        ("publishers", "/vision/left/skeleton"),
+        ("publishers", "/vision/right/skeleton"),
+        ("subscribers", "/vision/engage"),
+        ("subscribers", "/vision/reset"),
         ("publishers", "/head/color/image_raw"),
         ("publishers", "/head/color/image_rect_raw"),
         ("publishers", "/head/aligned_depth_to_color/image_raw"),
@@ -256,7 +260,8 @@ FORBIDDEN_TOPICS = {
 # what it stops.
 REQUIRED_TOPICS = {
     "recorder": [("publishers", "/rosout")],
-    "processor": [("publishers", "/process/state"), ("subscribers", "/process/start")],
+    "processor": [("publishers", "/process/state"), ("subscribers", "/process/start"),
+                  ("subscribers", "/process/hands")],
     "robot": [("publishers", "/joint_states")],
     "robot-anvil": [
         ("publishers", "/joint_states"),
