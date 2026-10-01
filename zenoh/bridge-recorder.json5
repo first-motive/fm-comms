@@ -63,9 +63,6 @@
           "^/head/.*/camera_info$",
           "^/wrist/.*/camera_info$",
           "^/head/imu$",
-          /// Hand tracking: the skeletons and the engage/tracking state the
-          /// cockpit renders.
-          "^/vision/.*$",
           /// Capture session state the desktop's capture surface reads.
           "^/capture/.*$",
           "^/fm_data_record/.*$",
@@ -81,12 +78,9 @@
           "^/rosout$",
         ],
         subscribers: [
-          /// The desktop drives the capture session and resets the tracker; both
-          /// are commands INTO the rig, so they are the only inbound topics.
+          /// The desktop drives the capture session.
           "^/capture/.*$",
           "^/fm_data_record/episode_marker$",
-          "^/vision/engage$",
-          "^/vision/reset$",
         ],
         service_servers: [
           /// The bridge serves the rig's URDF assets to the cockpit through the
