@@ -1,8 +1,10 @@
 # Hardware Gate
 
-The checklist that decides whether the zenoh-only transport replaces the FastDDS
-LAN profile. Every line has a command and a pass criterion, so running the gate
-is mechanical: type the command, compare the output, record it in the pull
+The checklist that decided whether the zenoh-only transport replaces the FastDDS
+LAN profile. It did: Zenoh is the default transport since fm-ros2#137. Run the
+gate again before any change to the transport, the router, or a bridge profile
+reaches the fleet. Every line has a command and a pass criterion, so running the
+gate is mechanical: type the command, compare the output, record it in the pull
 request. Nothing here asks for judgement.
 
 **The rule: every line green, or nothing merges.** One red line stops the gate.
@@ -12,8 +14,12 @@ the fleet, not of the machine you happened to retest.
 
 ## Before You Start
 
-Four machines, all converged on the `v*-zenoh.4` pre-release tags (fm-ros2 and
-fm-docker stay on `.1` unless they moved):
+Four machines, all converged on the release under test. For a stable release,
+that is the newest `vX.Y.Z` tag of every repo. For a trial, every repo runs the
+same pre-release name, as fm-ros2's
+[`docs/RELEASE.md`](https://github.com/first-motive/fm-ros2/blob/main/docs/RELEASE.md)
+describes. The first gate ran on the `v0.2.0-zenoh.*` tags. That trial is
+closed: its tags are history, and no machine should still be pinned to one.
 
 | Machine | Role | Workload | What it runs |
 | --- | --- | --- | --- |
