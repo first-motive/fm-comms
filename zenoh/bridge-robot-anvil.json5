@@ -66,6 +66,10 @@
           /// Wrist and scene cameras, compressed only. A raw frame is 20-50x
           /// the bytes and nothing on the fabric reads one.
           "^/cam_.*/compressed$",
+          /// Where fm-skills' perception places the can and the paper on the
+          /// table, which the desktop draws beside the robot as its twin.
+          /// Detections only: a few hundred bytes each, read-only.
+          "^/perception/chest/.*$",
         ],
       },
 
@@ -76,6 +80,7 @@
         "/joint_states=50",
         "/ee_pose_.*=30",
         "/cam_.*/compressed=10",
+        "/perception/chest/.*=10",
       ],
 
       reliable_routes_blocking: false,
