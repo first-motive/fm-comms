@@ -126,6 +126,7 @@ processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state and cameras out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
+sim          a sim host: run state and 10 Hz cameras out, nothing in
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
 
@@ -140,6 +141,32 @@ poses, and compressed camera frames go out, and no topic comes back.
 tower is genuinely both machines: the sim publishes the joint states the cockpit
 renders while the dataset engine runs beside it. Under `processor` alone its
 bridge held a session and carried no state (fm-comms#20).
+
+`sim` is for a host running fm-sim runs, which the desktop and `fm sim` drive
+through the sim agent's `fm/sim/<host>/*` queryables. The agent starts, resets,
+and stops a run locally, so like `robot-anvil` the profile takes no topic inward,
+and it answers no service either: a reset goes through the agent's `reset` verb,
+which calls `/sim/reset` on the host. What it publishes is this list and nothing
+else:
+
+```
+/joint_states  /tf  /tf_static  /clock  /rosout
+/sim/objects  /sim/markers  /sim/outcome
+/task/events
+/perception/chest/can  /perception/chest/paper  /perception/wrist/can
+/cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
+```
+
+The `/task` and `/perception` names are the ones fm-skills publishes today, so a
+new one is added here and in the profile together. `check-transport.py` holds
+the profile to this list in both directions. Every name must pass, and every
+rule must be either one name above written literally (`^/sim/objects$`, no
+regex metacharacters; a concrete camera name counts) or one of the two camera
+patterns
+`^/cam_[a-z0-9_]+/image_raw/compressed$` and `^/cam_[a-z0-9_]+/camera_info$`,
+string for string. Any other rule fails the pull request, as does a rule that
+admits a known neighbour (`/sim/reset`, `/task/pick_place`, a raw `image_raw`
+frame, `/commanded_ee_right`).
 
 `cockpit` is the mirror of the others, and reads backwards on purpose. A rig
 publishes what it produces and accepts a few commands; the Mac subscribes to what
