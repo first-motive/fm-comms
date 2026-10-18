@@ -16,6 +16,12 @@
 /// camera frames — and scripts/ci/check-transport.py grades this profile against
 /// the same topic names it grades the other two against.
 ///
+/// It carries no fm-sim topic, and adding one here would mislead: this bridge
+/// runs Humble, and a Humble bridge never discovers the Jazzy nodes of an fm-sim
+/// run (fm-comms#39 added them and fm-ws-01 routed none). A workstation that
+/// hosts sim runs adds a second bridge for them instead, bridge-sim.json5 under
+/// ROS_DISTRO=jazzy (`./install.sh --role bridge-sim`).
+///
 /// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
 /// result to /etc/fm-comms/bridge.json5. Committed files carry placeholders only —
 /// never a real address. Read the render before installing it:

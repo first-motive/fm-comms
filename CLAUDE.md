@@ -44,6 +44,11 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
   systemd unit on Linux and a user LaunchAgent on macOS. The Mac's profile is
   `cockpit` and it is the mirror of a rig's: the fleet's published set in, teleop
   commands out, and no namespace, because the rigs already prefixed their keys.
+- **One bridge per distro on a host.** A workstation that hosts sim runs keeps
+  its Humble bridge and adds `install.sh --role bridge-sim`: the `sim` profile
+  under `ROS_DISTRO=jazzy`, in the same namespace, under node name
+  `zenoh_bridge_<ns>_sim`. A bridge sees only nodes of its own distro, so sim
+  topics never go on the workstation's own profile.
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.

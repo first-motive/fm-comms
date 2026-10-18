@@ -14,6 +14,12 @@
 # runs". The installer is driven in dry-run mode, where it prints the commands it
 # would issue, and this asserts the restart is among them.
 #
+# The same sentence holds for a workstation's second bridge, the Jazzy one its
+# sim runs need (`./install.sh --role bridge-sim`): it is the same installer
+# under another unit name, so it is driven through its own front door and held
+# to the same restart, plus the one thing that makes it a second bridge rather
+# than a copy of the first — it never touches fm-zenoh-bridge.service.
+#
 # Both service paths are covered on any host, because `uname` is stubbed: the
 # choice between systemd and launchd is the one branch that cannot be exercised
 # by running on one machine, and it is exactly where the macOS half of the bug
@@ -114,6 +120,23 @@ run_installer() {
     "$ROOT/scripts/install-bridge.sh" install 2>&1
 }
 
+# Run the sim bridge's installer the same way, through its own script. Never
+# fails the test by itself: a refusal is one of the things graded.
+run_sim_installer() {
+  local uname_s="$1" action="$2" profile="$3"
+  PATH="$WORKDIR/bin:$PATH" \
+  FM_TEST_UNAME_S="$uname_s" \
+  FM_DRY_RUN=1 \
+  FM_YES=1 \
+  FM_MACHINE_FILE="$WORKDIR/machine.json" \
+  FM_COMMS_ENV_FILE="$WORKDIR/fm-comms.env" \
+  FM_COMMS_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_LOG_DIR="$WORKDIR/log" \
+  FM_BRIDGE_PROFILE="$profile" \
+    "$ROOT/scripts/install-bridge-sim.sh" "$action" 2>&1 || true
+}
+
 check() {
   local what="$1" haystack="$2" needle="$3"
   if printf '%s' "$haystack" | grep -qF -- "$needle"; then
@@ -122,6 +145,17 @@ check() {
     fm_err "  FAIL $what"
     fm_err "       expected to find: $needle"
     FAILURES=$((FAILURES + 1))
+  fi
+}
+
+check_absent() {
+  local what="$1" haystack="$2" needle="$3"
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    fm_err "  FAIL $what"
+    fm_err "       expected NOT to find: $needle"
+    FAILURES=$((FAILURES + 1))
+  else
+    fm_ok "  ok   $what"
   fi
 }
 
@@ -171,6 +205,56 @@ main() {
   out="$(run_installer Darwin workstation)"
   check "macos: an unchanged profile still kickstarts" "$out" \
     "config unchanged — kickstarting ai.firstmotive.zenoh-bridge"
+
+  # The sim bridge, first install: nothing at bridge-sim.json5 yet, so the
+  # render is a change and its own unit restarts — on jazzy, on its own config,
+  # under its own node name, and with the workstation's bridge left alone.
+  out="$(run_sim_installer Linux install workstation)"
+  check "sim: a new config restarts its own unit" "$out" \
+    "config changed — restarting fm-zenoh-bridge-sim.service"
+  check "sim: the restart is a real systemctl call" "$out" \
+    "would run: sudo systemctl restart fm-zenoh-bridge-sim.service"
+  check "sim: the unit runs jazzy" "$out" "Environment=ROS_DISTRO=jazzy"
+  check "sim: the unit reads its own config" "$out" \
+    "--config /etc/fm-comms/bridge-sim.json5"
+  check "sim: the unit keeps the workstation's loopback DDS" "$out" \
+    "Environment=ROS_LOCALHOST_ONLY=1"
+  check "sim: the config takes the workstation's namespace" "$out" \
+    'namespace: "/fm_ws_01"'
+  check "sim: the config takes a node name of its own" "$out" \
+    'nodename: "zenoh_bridge_fm_ws_01_sim"'
+  check_absent "sim: the workstation's bridge is not restarted" "$out" \
+    "systemctl restart fm-zenoh-bridge.service"
+
+  # A reinstall that changes nothing says so, like the main bridge's.
+  FM_MACHINE_FILE="$WORKDIR/machine.json" FM_COMMS_ENV_FILE="$WORKDIR/fm-comms.env" \
+    "$ROOT/run.sh" render bridge-sim -o "$WORKDIR/etc/bridge-sim.json5" >/dev/null
+  out="$(run_sim_installer Linux install workstation)"
+  check "sim: an unchanged config try-restarts instead" "$out" \
+    "config unchanged — try-restart fm-zenoh-bridge-sim.service"
+
+  # Where a second bridge would be a mistake, it is refused before anything is
+  # placed: a Mac hosts no sim run, and a sim host's own bridge is this profile.
+  out="$(run_sim_installer Darwin install workstation)"
+  check "sim: refused on macOS" "$out" "the sim bridge is a Linux unit"
+  check_absent "sim: nothing is installed on macOS" "$out" "would run:"
+  out="$(run_sim_installer Linux install sim)"
+  check "sim: refused on a sim host" "$out" "its own bridge already carries the sim profile"
+  check_absent "sim: nothing is installed on a sim host" "$out" "would run:"
+
+  # Uninstall removes the sim bridge's unit and config and nothing of the
+  # workstation's.
+  out="$(run_sim_installer Linux uninstall workstation)"
+  check "sim: uninstall disables its own unit" "$out" \
+    "would run: sudo systemctl disable --now fm-zenoh-bridge-sim.service"
+  check "sim: uninstall removes its own config" "$out" \
+    "would run: sudo rm -f $WORKDIR/etc/bridge-sim.json5"
+  check_absent "sim: uninstall leaves the workstation's unit running" "$out" \
+    "disable --now fm-zenoh-bridge.service"
+  check_absent "sim: uninstall leaves the workstation's unit file" "$out" \
+    "rm -f /etc/systemd/system/fm-zenoh-bridge.service"
+  check_absent "sim: uninstall leaves the workstation's config" "$out" \
+    "$WORKDIR/etc/bridge.json5"
 
   if [ "$FAILURES" -gt 0 ]; then
     fm_err "$FAILURES check(s) failed — a reinstall would leave the old config running"

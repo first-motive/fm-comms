@@ -23,7 +23,10 @@ Three passes, in order of how early they catch a mistake:
    the recorder never publishes raw frames, the robot never accepts a trajectory
    from off-rig, the anvil workcell accepts nothing inbound at all, the sim host
    carries exactly the simulation contract's topic list with its cameras capped,
-   and the cockpit Mac publishes teleop and nothing else.
+   a workstation's second (Jazzy) sim bridge holds that same contract in the
+   workstation's namespace under a node name of its own, its unit differs from
+   the workstation's only in distro, config, and description, and the cockpit
+   Mac publishes teleop and nothing else.
 
 Run it the same way CI does::
 
@@ -429,8 +432,8 @@ def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
             fail(where, f"camera topic {topic!r} is capped at {cap} Hz, above {SIM_CAMERA_MAX_HZ}")
 
 
-def check_bridge(profile: str, config: dict) -> None:
-    where = f"bridge-{profile}.json5"
+def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
+    where = where or f"bridge-{profile}.json5"
     if config.get("mode") != "client":
         fail(where, f"mode is {config.get('mode')!r}, expected 'client'")
     if config.get("scouting", {}).get("multicast", {}).get("enabled") is not False:
@@ -546,17 +549,92 @@ SIM_MUTATIONS = (
 )
 
 
-def check_sim_mutations(config: dict) -> None:
-    """Grade each SIM_MUTATIONS case against check_bridge's real findings."""
-    for description, mutate, expected in SIM_MUTATIONS:
+def check_mutations(name: str, config, mutations: tuple, check) -> None:
+    """Grade each mutation case against the check's real findings."""
+    for description, mutate, expected in mutations:
         broken = copy.deepcopy(config)
         mutate(broken)
         start = len(failures)
-        check_bridge("sim", broken)
+        check(broken)
         found = failures[start:]
         del failures[start:]
         if not any(expected in line for line in found):
-            fail("sim self-test", f"{description} was not reported (want {expected!r}, got {found!r})")
+            fail(f"{name} self-test", f"{description} was not reported (want {expected!r}, got {found!r})")
+
+
+# The node name each bridge takes. A host's one bridge is zenoh_bridge_<ns>; a
+# workstation's second, Jazzy bridge for sim runs is the same plus `_sim`.
+SIM_PAIR_NODENAME_SUFFIX = "_sim"
+
+
+def check_sim_pair(main: dict, sim: dict) -> None:
+    """A workstation's sim bridge shares its namespace and not its node name.
+
+    The namespace is what lets the desktop's `<host>/**` subscription read the
+    sim run with nothing configured on its side; the node name is what keeps the
+    two bridges apart in the ROS graph and in each bridge's admin space.
+    """
+    where = "bridge-sim.json5 (workstation)"
+    main_ros2dds, sim_ros2dds = _ros2dds(main), _ros2dds(sim)
+    if sim_ros2dds.get("namespace") != main_ros2dds.get("namespace"):
+        fail(where, f"namespace {sim_ros2dds.get('namespace')!r} is not the workstation's "
+                    f"{main_ros2dds.get('namespace')!r}, so the desktop would not read it")
+    want = f"{main_ros2dds.get('nodename')}{SIM_PAIR_NODENAME_SUFFIX}"
+    if sim_ros2dds.get("nodename") != want:
+        fail(where, f"nodename is {sim_ros2dds.get('nodename')!r}, want {want!r} beside the workstation's own")
+
+
+PAIR_MUTATIONS = (
+    ("a shared node name",
+     lambda pair: _ros2dds(pair[1]).update(nodename=_ros2dds(pair[0])["nodename"]),
+     "nodename is"),
+    ("a namespace of its own",
+     lambda pair: _ros2dds(pair[1]).update(namespace="/fm_ws_01_sim"),
+     "is not the workstation's"),
+)
+
+
+# The unit lines the two bridges may differ in. Every other line must match, so
+# the sim bridge cannot drift onto another DDS island, Cyclone profile, or env
+# file than the bridge it runs beside.
+UNIT_VARIANT_KEYS = ("Description=", "Environment=ROS_DISTRO=", "ExecStart=")
+
+
+def unit_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
+
+
+def check_units(main: str, sim: str) -> None:
+    """The sim unit is the workstation's, with its distro, config, and name changed."""
+    for where, text, distro, config in (
+        ("fm-zenoh-bridge.service", main, "humble", "/etc/fm-comms/bridge.json5"),
+        ("fm-zenoh-bridge-sim.service", sim, "jazzy", "/etc/fm-comms/bridge-sim.json5"),
+    ):
+        lines = unit_lines(text)
+        if "${FM_" in text:
+            fail(where, "rendered unit still has a placeholder")
+        if f"Environment=ROS_DISTRO={distro}" not in lines:
+            fail(where, f"does not run with ROS_DISTRO={distro}")
+        if not any(line.startswith("ExecStart=") and line.endswith(f"--config {config}") for line in lines):
+            fail(where, f"does not start the bridge on {config}")
+    shared = [[line for line in unit_lines(text) if not line.startswith(UNIT_VARIANT_KEYS)]
+              for text in (main, sim)]
+    if shared[0] != shared[1]:
+        fail("fm-zenoh-bridge-sim.service", "differs from fm-zenoh-bridge.service beyond its "
+             f"distro, config, and description: {sorted(set(shared[0]) ^ set(shared[1]))}")
+
+
+UNIT_MUTATIONS = (
+    ("a sim unit left on humble",
+     lambda units: units.__setitem__(1, units[1].replace("ROS_DISTRO=jazzy", "ROS_DISTRO=humble")),
+     "does not run with ROS_DISTRO=jazzy"),
+    ("a sim unit on the main config",
+     lambda units: units.__setitem__(1, units[1].replace("bridge-sim.json5", "bridge.json5")),
+     "does not start the bridge on /etc/fm-comms/bridge-sim.json5"),
+    ("a sim unit off loopback",
+     lambda units: units.__setitem__(1, units[1].replace("Environment=ROS_LOCALHOST_ONLY=1\n", "")),
+     "beyond its distro"),
+)
 
 
 def main() -> int:
@@ -609,6 +687,7 @@ def main() -> int:
             except ValueError as exc:
                 fail("router.json5", f"rendered output is not valid JSON5: {exc}")
 
+        bridges: dict[str, dict] = {}
         for profile in BRIDGE_PROFILES:
             if profile not in CARDS:
                 fail(f"bridge-{profile}.json5", "has no fixture card in CARDS, so it is never rendered")
@@ -622,8 +701,40 @@ def main() -> int:
                 fail(f"bridge-{profile}.json5", f"rendered output is not valid JSON5: {exc}")
                 continue
             check_bridge(profile, config)
+            bridges[profile] = config
             if profile == "sim":
-                check_sim_mutations(config)
+                check_mutations("sim", config, SIM_MUTATIONS, lambda c: check_bridge("sim", c))
+            # A host's one bridge keeps the plain node name, which the sim pair
+            # below extends. The cockpit has no namespace to derive it from.
+            ros2dds = _ros2dds(config)
+            if profile != "cockpit" and ros2dds.get("nodename") != f"zenoh_bridge_{ros2dds.get('namespace', '').lstrip('/')}":
+                fail(f"bridge-{profile}.json5", f"nodename {ros2dds.get('nodename')!r} is not zenoh_bridge_<namespace>")
+
+        # A workstation that hosts sim runs keeps its own Humble bridge and adds
+        # a Jazzy one beside it (`./install.sh --role bridge-sim`), rendered from
+        # the workstation's own card. It is held to the full sim contract, then
+        # to the pair: same namespace, its own node name, and a unit that matches
+        # the workstation's in everything but distro, config, and description.
+        card = CARDS["workstation"]
+        rendered = render("bridge-sim", "workstation", card, workdir)
+        sim_second = None
+        if rendered is not None:
+            try:
+                sim_second = json5.loads(rendered)
+            except ValueError as exc:
+                fail("bridge-sim.json5 (workstation)", f"rendered output is not valid JSON5: {exc}")
+        if sim_second is not None and "workstation" in bridges:
+            check_bridge("sim", sim_second, where="bridge-sim.json5 (workstation)")
+            pair = (bridges["workstation"], sim_second)
+            check_sim_pair(*pair)
+            check_mutations("sim pair", pair, PAIR_MUTATIONS, lambda p: check_sim_pair(*p))
+        else:
+            fail("bridge-sim.json5 (workstation)", "did not render beside the workstation's own bridge")
+
+        units = [render(kind, "workstation", card, workdir) for kind in ("bridge-unit", "bridge-sim-unit")]
+        if None not in units:
+            check_units(*units)
+            check_mutations("units", units, UNIT_MUTATIONS, lambda u: check_units(*u))
 
         # Both plists are rendered too: they are generated the same way, from the
         # same inputs, and a malformed one is a service that never starts.

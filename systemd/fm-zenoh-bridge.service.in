@@ -1,5 +1,10 @@
 [Unit]
-Description=First Motive Zenoh ROS 2 bridge (zenoh-bridge-ros2dds)
+# Rendered twice on a workstation that hosts sim runs: once as
+# fm-zenoh-bridge.service, the host's own bridge, and once as
+# fm-zenoh-bridge-sim.service, a Jazzy bridge for the sim image beside it. The
+# two differ in their description, their distro, and their config, and in
+# nothing else.
+Description=${FM_BRIDGE_DESCRIPTION}
 Documentation=https://github.com/first-motive/fm-comms
 After=network-online.target
 Wants=network-online.target
@@ -19,6 +24,8 @@ Type=simple
 # Every First Motive rig runs Humble. A robot supported by its vendor runs
 # whatever the vendor ships — the Anvil workcell runs Jazzy — so this is a
 # per-host fact, and FM_ROS_DISTRO in fm-comms.env is where it is recorded.
+# The sim bridge takes FM_SIM_ROS_DISTRO instead (jazzy unless set), because the
+# sim image is Jazzy whatever the host's own graph runs.
 Environment=ROS_DISTRO=${FM_ROS_DISTRO}
 # The zenoh profile confines the rig's DDS to loopback; the bridge must sit on
 # the same island with the same Cyclone profile — unicast localhost discovery
@@ -35,7 +42,7 @@ Environment=CYCLONEDDS_URI=file:///etc/fm-comms/cyclonedds.xml
 # config carries the domain too, and the installer writes both from the same
 # FM_ROS_DOMAIN_ID so they cannot drift apart.
 EnvironmentFile=/etc/fm-comms.env
-ExecStart=/usr/bin/zenoh-bridge-ros2dds --config /etc/fm-comms/bridge.json5
+ExecStart=/usr/bin/zenoh-bridge-ros2dds --config /etc/fm-comms/${FM_BRIDGE_CONFIG_FILE}
 Restart=always
 RestartSec=5
 

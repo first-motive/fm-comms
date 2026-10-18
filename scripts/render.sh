@@ -9,6 +9,9 @@
 # available here to read first.
 #
 #     ./run.sh render bridge            what /etc/fm-comms/bridge.json5 would be
+#     ./run.sh render bridge-unit       what fm-zenoh-bridge.service would be
+#     ./run.sh render bridge-sim        a workstation's sim bridge config
+#     ./run.sh render bridge-sim-unit   what fm-zenoh-bridge-sim.service would be
 #     ./run.sh render router            what /etc/fm-comms/router.json5 would be
 #     ./run.sh render launchd           the router's macOS LaunchDaemon plist
 #     ./run.sh render launchagent       the Mac bridge's LaunchAgent plist
@@ -37,6 +40,10 @@ Usage: ./run.sh render <what> [-o FILE]
   router       the zenohd config
   launchd      the router's macOS LaunchDaemon plist
   bridge       the ROS 2 bridge config for this machine's workload
+  bridge-unit  the bridge's systemd unit (Linux)
+  bridge-sim   a workstation's second, Jazzy bridge for sim runs
+  bridge-sim-unit
+               that bridge's systemd unit
   launchagent  the Mac bridge's LaunchAgent plist
   episodes     the episode queryable's systemd unit
   show         the resolved host facts, one per line
@@ -117,7 +124,8 @@ main() {
 
   case "$what" in
     show) show ;;
-    router|launchd|launchagent|bridge|episodes) fm_comms_render "$what" "$dest" ;;
+    router|launchd|launchagent|bridge|bridge-unit|bridge-sim|bridge-sim-unit|episodes)
+      fm_comms_render "$what" "$dest" ;;
     *) fm_err "unknown render target: $what"; usage; return 1 ;;
   esac
 }
