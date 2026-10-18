@@ -125,7 +125,7 @@ recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state and cameras out, nothing in
-workstation  the GPU tower: robot and processor at once, since it runs both
+workstation  the GPU tower: robot, processor, and sim host at once
 sim          a sim host: run state and 10 Hz cameras out, nothing in
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
@@ -140,9 +140,13 @@ poses, and compressed camera frames go out, and no topic comes back.
 `workstation` is the union of `robot` and `processor`, and exists because the
 tower is genuinely both machines: the sim publishes the joint states the cockpit
 renders while the dataset engine runs beside it. Under `processor` alone its
-bridge held a session and carried no state (fm-comms#20).
+bridge held a session and carried no state (fm-comms#20). It also carries every
+`sim` publisher rule and both camera caps, word for word, because a workstation
+can host fm-sim runs too: fm-ws-01 keeps `--workload workstation` and is a sim
+host as well. `check-transport.py` fails the pull request if the workstation
+drops a rule or cap that `bridge-sim.json5` carries.
 
-`sim` is for a host running fm-sim runs, which the desktop and `fm sim` drive
+`sim` is for a host that only runs fm-sim runs, which the desktop and `fm sim` drive
 through the sim agent's `fm/sim/<host>/*` queryables. The agent starts, resets,
 and stops a run locally, so like `robot-anvil` the profile takes no topic inward,
 and it answers no service either: a reset goes through the agent's `reset` verb,
