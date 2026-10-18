@@ -28,14 +28,23 @@
 #     ./scripts/install-bridge.sh [install|uninstall]
 #     ./install.sh --role bridge
 #
-# Env (install.sh passes these down; both default to off):
-#   FM_DRY_RUN=1   print what would happen, change nothing
-#   FM_YES=1       assume yes, prompt for nothing
+# The same script installs a workstation's SECOND bridge, the Jazzy one its sim
+# runs need, when FM_BRIDGE_VARIANT=sim — which is all scripts/install-bridge-sim.sh
+# sets before handing over, so `./install.sh --role bridge-sim` reaches it. The
+# variant changes what is rendered and what the unit is called, and nothing about
+# how either is installed or restarted. See zenoh/bridge-sim.json5 for why a
+# workstation needs two.
+#
+# Env (install.sh passes the first two down; both default to off):
+#   FM_DRY_RUN=1          print what would happen, change nothing
+#   FM_YES=1              assume yes, prompt for nothing
+#   FM_BRIDGE_VARIANT     main (default) | sim
 
 set -euo pipefail
 
 FM_DRY_RUN="${FM_DRY_RUN:-0}"
 FM_YES="${FM_YES:-0}"
+FM_BRIDGE_VARIANT="${FM_BRIDGE_VARIANT:-main}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib.sh disable=SC1091
@@ -50,8 +59,33 @@ ENV_FILE="$FM_COMMS_ENV_FILE"
 CONF_DIR="$FM_COMMS_CONF_DIR"
 USER_CONF_DIR="$FM_COMMS_USER_CONF_DIR"
 LOG_DIR="$FM_COMMS_USER_LOG_DIR"
-UNIT=fm-zenoh-bridge.service
 AGENT_PLIST="$HOME/Library/LaunchAgents/$FM_LAUNCHD_BRIDGE_LABEL.plist"
+
+# Everything the two variants differ in, set once. RENDER_* name fm_comms_render
+# kinds; SIBLING_UNIT is the other bridge on the same host, which shares this
+# one's Cyclone profile and so restarts when that profile changes.
+case "$FM_BRIDGE_VARIANT" in
+  main)
+    NAME=bridge
+    UNIT=fm-zenoh-bridge.service
+    SIBLING_UNIT=fm-zenoh-bridge-sim.service
+    CONFIG_FILE=bridge.json5
+    RENDER_CONFIG=bridge
+    RENDER_UNIT=bridge-unit
+    ;;
+  sim)
+    NAME="sim bridge"
+    UNIT=fm-zenoh-bridge-sim.service
+    SIBLING_UNIT=fm-zenoh-bridge.service
+    CONFIG_FILE=bridge-sim.json5
+    RENDER_CONFIG=bridge-sim
+    RENDER_UNIT=bridge-sim-unit
+    ;;
+  *)
+    fm_err "FM_BRIDGE_VARIANT is '$FM_BRIDGE_VARIANT' (want main | sim)"
+    exit 1
+    ;;
+esac
 
 # Set by render_config: 1 when the config just rendered differs from the one
 # already installed. The service step reads it to choose how loudly to restart.
@@ -130,7 +164,7 @@ place_env() {
 render_config() {
   local dest="$1" tmp
   tmp="$(mktemp)"
-  fm_comms_render bridge "$tmp" || { rm -f "$tmp"; return 1; }
+  fm_comms_render "$RENDER_CONFIG" "$tmp" || { rm -f "$tmp"; return 1; }
   # Compared before the dry run returns, not after: "would this reinstall change
   # what the service is running" is the question a dry run is asked, and it can
   # be answered without writing anything.
@@ -150,9 +184,9 @@ render_config() {
 
 # The Linux service path: a systemd unit, system-wide, enabled and started.
 install_unit_linux() {
-  fm_log "  rendering $CONF_DIR/bridge.json5"
+  fm_log "  rendering $CONF_DIR/$CONFIG_FILE"
   run sudo mkdir -p "$CONF_DIR"
-  render_config "$CONF_DIR/bridge.json5" || return 1
+  render_config "$CONF_DIR/$CONFIG_FILE" || return 1
 
   # The same Cyclone profile the macOS agent gets (#23): without it the bridge
   # runs stock discovery — default interface, ~9-participant loopback ceiling —
@@ -162,6 +196,7 @@ install_unit_linux() {
   # interface needs a bridge on that same interface, and which one is a per-host
   # fact. See fm_comms_render cyclonedds.
   fm_log "  installing $CONF_DIR/cyclonedds.xml"
+  local dds_changed=0
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would write $CONF_DIR/cyclonedds.xml:"
     fm_comms_render cyclonedds - || return 1
@@ -171,8 +206,12 @@ install_unit_linux() {
     fm_comms_render cyclonedds "$dds_tmp" || { rm -f "$dds_tmp"; return 1; }
     # A DDS change moves which graph the bridge can see, so it restarts for the
     # same reason a config change does. This was safe to ignore while the file
-    # was static and is not now.
-    if fm_file_differs "$dds_tmp" "$CONF_DIR/cyclonedds.xml"; then FM_RENDER_CHANGED=1; fi
+    # was static and is not now. Both bridges on a workstation read this one
+    # file, so a change restarts the sibling as well (below).
+    if fm_file_differs "$dds_tmp" "$CONF_DIR/cyclonedds.xml"; then
+      FM_RENDER_CHANGED=1
+      dds_changed=1
+    fi
     run sudo install -m 0644 "$dds_tmp" "$CONF_DIR/cyclonedds.xml"
     rm -f "$dds_tmp"
   fi
@@ -183,11 +222,11 @@ install_unit_linux() {
   fm_log "  installing $UNIT"
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would write /etc/systemd/system/$UNIT:"
-    fm_comms_render bridge-unit - || return 1
+    fm_comms_render "$RENDER_UNIT" - || return 1
   else
     local unit_tmp
     unit_tmp="$(mktemp)"
-    fm_comms_render bridge-unit "$unit_tmp" || { rm -f "$unit_tmp"; return 1; }
+    fm_comms_render "$RENDER_UNIT" "$unit_tmp" || { rm -f "$unit_tmp"; return 1; }
     if fm_file_differs "$unit_tmp" "/etc/systemd/system/$UNIT"; then FM_RENDER_CHANGED=1; fi
     run sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/$UNIT"
     rm -f "$unit_tmp"
@@ -211,6 +250,11 @@ install_unit_linux() {
   else
     fm_log "  config unchanged — try-restart $UNIT"
     run sudo systemctl try-restart "$UNIT"
+  fi
+  # try-restart, so a sibling that is not installed stays not installed.
+  if [ "$dds_changed" = "1" ]; then
+    fm_log "  cyclonedds.xml changed — try-restart $SIBLING_UNIT, which reads it too"
+    run sudo systemctl try-restart "$SIBLING_UNIT"
   fi
   fm_log "  watch it with: journalctl -u $UNIT -f"
 }
@@ -327,6 +371,25 @@ install_agent_macos() {
   fm_log "  watch it with: tail -f $LOG_DIR/zenoh-bridge.log"
 }
 
+# The sim bridge is a second bridge beside a Linux host's own, so refuse the two
+# hosts where it would be a mistake rather than a second bridge: a Mac, whose
+# cockpit bridge subscribes and never hosts a run, and a sim host, whose own
+# bridge already is this profile — a second copy would route every sim topic
+# twice under two node names.
+require_sim_host() {
+  local os="$1" profile
+  if [ "$os" != linux ]; then
+    fm_err "the sim bridge is a Linux unit for a workstation that hosts sim runs; this host is $os"
+    return 1
+  fi
+  profile="$(fm_comms_bridge_profile)" || return 1
+  if [ "$profile" = sim ]; then
+    fm_err "this host's workload is 'sim', so its own bridge already carries the sim profile"
+    fm_err "  set its distro with FM_ROS_DISTRO=jazzy in $ENV_FILE and run: ./install.sh --role bridge"
+    return 1
+  fi
+}
+
 do_install() {
   local os version
   os="$(fm_detect_os)"
@@ -336,8 +399,11 @@ do_install() {
   # still on dds-lan gets a clear refusal here rather than a second, contradictory
   # transport running beside the one it already speaks.
   fm_comms_require_transport || return 1
+  if [ "$FM_BRIDGE_VARIANT" = sim ]; then
+    require_sim_host "$os" || return 1
+  fi
 
-  fm_log "Installing the Zenoh ROS 2 bridge (zenoh $version) on $os"
+  fm_log "Installing the Zenoh ROS 2 $NAME (zenoh $version) on $os"
 
   case "$os" in
     linux) install_linux "$version" ;;
@@ -351,24 +417,33 @@ do_install() {
     macos) install_agent_macos ;;
   esac
 
-  fm_ok "bridge install complete."
+  fm_ok "$NAME install complete."
 }
 
 do_uninstall() {
   local os
   os="$(fm_detect_os)"
-  fm_log "Removing the Zenoh ROS 2 bridge"
+  fm_log "Removing the Zenoh ROS 2 $NAME"
   if [ "$os" = linux ]; then
     run sudo systemctl disable --now "$UNIT" || true
     run sudo rm -f "/etc/systemd/system/$UNIT"
     run sudo systemctl daemon-reload
     # Only what this script placed. $ENV_FILE holds the operator's own values, so
     # it survives an uninstall and a later reinstall picks it back up.
-    run sudo rm -f "$CONF_DIR/bridge.json5"
-    # The package stays, but not pinned: once fm-comms no longer manages it,
-    # apt may move it freely.
-    run sudo apt-mark unhold zenoh-bridge-ros2dds 2>/dev/null || true
-    fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"
+    run sudo rm -f "$CONF_DIR/$CONFIG_FILE"
+    # The package, its pin, and cyclonedds.xml are shared with the sibling
+    # bridge, so they are released only when neither unit is left to use them.
+    # The package stays either way, but not pinned: once fm-comms no longer
+    # manages it, apt may move it freely.
+    if [ -f "/etc/systemd/system/$SIBLING_UNIT" ]; then
+      fm_log "  left in place: $ENV_FILE, $CONF_DIR/cyclonedds.xml, and the held"
+      fm_log "  zenoh-bridge-ros2dds package, which $SIBLING_UNIT still uses"
+    else
+      run sudo apt-mark unhold zenoh-bridge-ros2dds 2>/dev/null || true
+      fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"
+    fi
+  elif [ "$FM_BRIDGE_VARIANT" = sim ]; then
+    fm_log "  nothing to remove: the sim bridge is never installed on $os"
   else
     fm_launchctl bootout "gui/$FM_AGENT_UID/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
     run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5" "$USER_CONF_DIR/cyclonedds.xml"
@@ -376,7 +451,7 @@ do_uninstall() {
     # usually in them, and this is the moment someone wants to read it.
     fm_log "  left in place: $ENV_FILE, $LOG_DIR, and the zenoh-bridge-ros2dds binary"
   fi
-  fm_ok "bridge uninstall complete."
+  fm_ok "$NAME uninstall complete."
 }
 
 main() {

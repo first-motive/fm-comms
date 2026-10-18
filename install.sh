@@ -118,8 +118,9 @@ Usage: ./install.sh [install|uninstall] --role <role> [options]
   uninstall    remove what a previous install placed
 
 Options:
-  --role NAME  which role this host plays (router | bridge | client | endpoint)
-               bridge covers a Linux rig and a macOS cockpit
+  --role NAME  which role this host plays (router | bridge | bridge-sim |
+               client | endpoint). bridge covers a Linux rig and a macOS
+               cockpit; bridge-sim adds a workstation's Jazzy bridge for sim runs
   -y, --yes    non-interactive; assume yes (CI mode)
   --dry-run    print what would happen, change nothing
   -h, --help   show this help
