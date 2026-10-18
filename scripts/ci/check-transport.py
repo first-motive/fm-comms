@@ -23,7 +23,8 @@ Three passes, in order of how early they catch a mistake:
    the recorder never publishes raw frames, the robot never accepts a trajectory
    from off-rig, the anvil workcell accepts nothing inbound at all, the sim host
    carries exactly the simulation contract's topic list with its cameras capped,
-   and the cockpit Mac publishes teleop and nothing else.
+   the workstation carries every sim publisher rule and camera cap besides its
+   own, and the cockpit Mac publishes teleop and nothing else.
 
 Run it the same way CI does::
 
@@ -246,9 +247,17 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/arm_controller/joint_trajectory"),
         ("subscribers", "/joint_trajectory_controller/joint_trajectory"),
         # Sim cameras render locally and are the largest thing this host could
-        # put on the wire.
+        # put on the wire. Compressed frames cross; the raw frame beside each
+        # one must not.
         ("publishers", "/head/color/image_raw"),
         ("publishers", "/wrist/color/image_raw"),
+        ("publishers", "/cam_chest/image_raw"),
+        ("publishers", "/cam_wrist_right/image_raw"),
+        # Siblings of the sim topics it now carries, which a rule written a
+        # little too wide would admit.
+        ("publishers", "/sim/debug"),
+        ("publishers", "/task/cmd"),
+        ("publishers", "/perception/wrist/arm"),
     ],
     "cockpit": [
         # The Mac publishes teleop, and teleop is Servo's jog topics — which the
@@ -345,12 +354,14 @@ REQUIRED_TOPICS = {
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
     ],
-    # Both halves of the union, which is the whole point of the profile.
+    # Every part of the union, which is the whole point of the profile: robot,
+    # processor, and the sim host's contract, since a workstation runs sim too.
     "workstation": [
         ("publishers", "/joint_states"),
         ("publishers", "/tf"),
         ("publishers", "/process/state"),
         ("subscribers", "/process/start"),
+        *((kind, topic) for kind, topics in SIM_CONTRACT.items() for topic in topics),
     ],
     "sim": [(kind, topic) for kind, topics in SIM_CONTRACT.items() for topic in topics],
     "cockpit": [("subscribers", "/fm_ws_01/joint_states")],
@@ -417,6 +428,11 @@ def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
             for topic in SIM_OUTSIDE_CONTRACT:
                 if matches(pattern, topic):
                     fail(where, f"{kind[:-1]} rule {pattern!r} admits {topic!r}, which is outside the contract")
+    check_camera_caps(where, ros2dds)
+
+
+def check_camera_caps(where: str, ros2dds: dict) -> None:
+    """Every sim camera topic is capped, and at no more than SIM_CAMERA_MAX_HZ."""
     caps = frequency_caps(where, ros2dds)
     for topic in SIM_CAMERA_TOPICS:
         cap = max_frequency(caps, topic)
@@ -424,6 +440,27 @@ def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
             fail(where, f"camera topic {topic!r} has no pub_max_frequencies cap")
         elif cap > SIM_CAMERA_MAX_HZ:
             fail(where, f"camera topic {topic!r} is capped at {cap} Hz, above {SIM_CAMERA_MAX_HZ}")
+
+
+def check_sim_superset(sim: dict, workstation: dict) -> None:
+    """The workstation carries every sim publisher rule and cap, word for word.
+
+    A workstation can host sim runs, so whatever a sim-only host exports must
+    leave the tower too. Compared string for string, the way the union with the
+    robot profile is written: a rule that drifts in one file and not the other
+    is the failure this catches, and a sampled topic would miss a rule that was
+    narrowed rather than dropped.
+    """
+    where = "bridge-workstation.json5"
+    sim_ros2dds, ws_ros2dds = _ros2dds(sim), _ros2dds(workstation)
+    ws_publishers = ws_ros2dds.get("allow", {}).get("publishers", [])
+    for pattern in sim_ros2dds.get("allow", {}).get("publishers", []):
+        if pattern not in ws_publishers:
+            fail(where, f"lacks sim publisher rule {pattern!r} from bridge-sim.json5")
+    ws_caps = ws_ros2dds.get("pub_max_frequencies", [])
+    for rule in sim_ros2dds.get("pub_max_frequencies", []):
+        if rule not in ws_caps:
+            fail(where, f"lacks sim rate cap {rule!r} from bridge-sim.json5")
 
 
 def check_bridge(profile: str, config: dict) -> None:
@@ -484,6 +521,8 @@ def check_bridge(profile: str, config: dict) -> None:
 
     if profile == "sim":
         check_sim_contract(where, ros2dds, allow)
+    if profile == "workstation":
+        check_camera_caps(where, ros2dds)
 
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):
@@ -543,17 +582,37 @@ SIM_MUTATIONS = (
 )
 
 
-def check_sim_mutations(config: dict) -> None:
-    """Grade each SIM_MUTATIONS case against check_bridge's real findings."""
-    for description, mutate, expected in SIM_MUTATIONS:
+# Ways the workstation could fall behind the sim profile, graded the same way.
+WORKSTATION_MUTATIONS = (
+    ("a dropped sim publisher",
+     lambda c: _ros2dds(c)["allow"].update(publishers=[
+         rule for rule in _ros2dds(c)["allow"]["publishers"] if rule != "^/sim/outcome$"]),
+     "lacks sim publisher rule"),
+    ("a dropped camera cap",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "compressed" not in rule]),
+     "has no pub_max_frequencies cap"),
+    ("a camera cap at 30 Hz",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule.replace("=10", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "lacks sim rate cap"),
+    ("a raw camera rule",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_[a-z0-9_]+/image_raw$"),
+     "allows publisher '/cam_chest/image_raw'"),
+)
+
+
+def check_mutations(profile: str, config: dict, mutations: tuple, check) -> None:
+    """Grade each mutation case against the check's real findings."""
+    for description, mutate, expected in mutations:
         broken = copy.deepcopy(config)
         mutate(broken)
         start = len(failures)
-        check_bridge("sim", broken)
+        check(broken)
         found = failures[start:]
         del failures[start:]
         if not any(expected in line for line in found):
-            fail("sim self-test", f"{description} was not reported (want {expected!r}, got {found!r})")
+            fail(f"{profile} self-test", f"{description} was not reported (want {expected!r}, got {found!r})")
 
 
 def main() -> int:
@@ -606,6 +665,7 @@ def main() -> int:
             except ValueError as exc:
                 fail("router.json5", f"rendered output is not valid JSON5: {exc}")
 
+        bridges: dict[str, dict] = {}
         for profile in BRIDGE_PROFILES:
             if profile not in CARDS:
                 fail(f"bridge-{profile}.json5", "has no fixture card in CARDS, so it is never rendered")
@@ -619,8 +679,20 @@ def main() -> int:
                 fail(f"bridge-{profile}.json5", f"rendered output is not valid JSON5: {exc}")
                 continue
             check_bridge(profile, config)
-            if profile == "sim":
-                check_sim_mutations(config)
+            bridges[profile] = config
+
+        if "sim" in bridges and "workstation" in bridges:
+            sim, workstation = bridges["sim"], bridges["workstation"]
+            check_sim_superset(sim, workstation)
+            check_mutations("sim", sim, SIM_MUTATIONS, lambda c: check_bridge("sim", c))
+
+            def check_workstation(config: dict) -> None:
+                check_bridge("workstation", config)
+                check_sim_superset(sim, config)
+
+            check_mutations("workstation", workstation, WORKSTATION_MUTATIONS, check_workstation)
+        else:
+            fail("bridge profiles", "sim and workstation must both render to grade one against the other")
 
         # Both plists are rendered too: they are generated the same way, from the
         # same inputs, and a malformed one is a service that never starts.

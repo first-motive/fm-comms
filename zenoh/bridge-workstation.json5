@@ -9,12 +9,20 @@
 /// nothing the gate reads — the bridge held a session and carried no state
 /// (fm-comms#20).
 ///
-/// The union is deliberate and stays a union: a rule that belongs on a rig
-/// belongs here in the same words, so a change to what a robot exports is made
-/// once in bridge-robot.json5 and copied here rather than re-invented. What must
-/// NOT cross is unchanged from both parents — no inbound `joint_trajectory`, no
-/// camera frames — and scripts/ci/check-transport.py grades this profile against
-/// the same topic names it grades the other two against.
+/// It also carries every publisher in `bridge-sim.json5`, because a workstation
+/// can host fm-sim runs: fm-ws-01 is a workstation and a sim host at once, and
+/// a card names one workload. Without the sim set here, a run on the tower would
+/// publish its clock, objects, outcome, and cameras into a bridge that dropped
+/// them. bridge-sim.json5 stays as it is for hosts that only run sim.
+///
+/// The union is deliberate and stays a union: a rule that belongs on a rig or a
+/// sim host belongs here in the same words, so a change to what a robot or a
+/// sim run exports is made once in its own profile and copied here rather than
+/// re-invented. What must NOT cross is unchanged from every parent — no inbound
+/// `joint_trajectory`, no raw camera frames — and scripts/ci/check-transport.py
+/// grades this profile against the same topic names it grades the others
+/// against, and fails it if it drops a publisher rule or camera cap that
+/// bridge-sim.json5 carries.
 ///
 /// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
 /// result to /etc/fm-comms/bridge.json5. Committed files carry placeholders only —
@@ -69,6 +77,22 @@
           /// Run state, the job index, and per-job detail — what the Process
           /// surface renders.
           "^/process/.*$",
+          /// The sim host's publishers, copied from bridge-sim.json5 in the same
+          /// words, so a sim run on this tower reaches the fabric the way one on
+          /// a sim-only host does. `/joint_states`, `/tf`, `/tf_static`, and
+          /// `/rosout` are above already.
+          "^/clock$",
+          "^/sim/objects$",
+          "^/sim/markers$",
+          "^/sim/outcome$",
+          "^/task/events$",
+          "^/perception/chest/can$",
+          "^/perception/chest/paper$",
+          "^/perception/wrist/can$",
+          /// Chest and wrist cameras, compressed only. A raw frame is 20-50x
+          /// the bytes and nothing on the fabric reads one.
+          "^/cam_[a-z0-9_]+/image_raw/compressed$",
+          "^/cam_[a-z0-9_]+/camera_info$",
         ],
         subscribers: [
           /// Jog commands. Servo applies its own limits and collision checks
@@ -95,10 +119,14 @@
 
       /// TF at full rate is the largest stream the sim produces; the cockpit
       /// renders well below it. The processor's own topics need no limit — the
-      /// supervisor publishes status on change, not on a timer.
+      /// supervisor publishes status on change, not on a timer. The camera caps
+      /// are bridge-sim.json5's: a camera at its render rate would outweigh
+      /// everything else here, and its intrinsics arrive once per frame.
       pub_max_frequencies: [
         "/tf=30",
         "/joint_states=50",
+        "/cam_[a-z0-9_]+/image_raw/compressed=10",
+        "/cam_[a-z0-9_]+/camera_info=10",
       ],
 
       reliable_routes_blocking: false,
