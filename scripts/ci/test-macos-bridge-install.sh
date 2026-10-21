@@ -22,12 +22,12 @@ printf 'FM_ROUTER_ENDPOINT=tcp/192.168.1.213:7447\n'   > "$WORK/lan.env"
 # --dry-run, not FM_DRY_RUN=1: the front door SETS that variable from the flag,
 # so exporting it is silently ignored and the install runs for real. Sandboxed
 # HOME as well, so a mistake here cannot reach the machine running the test.
-run_install() {  # env-file
+run_install() {  # env-file [role]
   local home
   home="$WORK/home"
   mkdir -p "$home/.config/fm" "$home/Library/LaunchAgents"
   cp "${FM_MACHINE_FILE:-$HOME/.config/fm/machine.json}" "$home/.config/fm/" 2>/dev/null || true
-  HOME="$home" FM_COMMS_ENV_FILE="$1" ./install.sh --role bridge --dry-run 2>&1
+  HOME="$home" FM_COMMS_ENV_FILE="$1" ./install.sh --role "${2:-bridge}" --dry-run 2>&1
 }
 
 echo "== a LAN endpoint on macOS is called out before it fails =="
@@ -83,6 +83,37 @@ if [[ -z "$(find "$WORK/home" -name 'bridge.json5' -o -name '*.plist' 2>/dev/nul
   pass "--dry-run leaves no config and no agent behind"
 else
   fail "--dry-run wrote files"
+fi
+
+echo "== the sim bridge on a Mac is a rendered config, not an agent =="
+# fm-sim's agent runs each run in an OrbStack container without host networking,
+# so a native bridge never sees the run's DDS. The agent runs the sim bridge
+# beside each run and reads the config this role renders.
+rm -rf "${WORK:?}/home"
+sim_out="$(run_install "$WORK/tailnet.env" bridge-sim)"
+if grep -q "would write $WORK/home/.config/fm-comms/bridge-sim.json5" <<<"$sim_out"; then
+  pass "the sim role renders bridge-sim.json5 into the user config dir"
+else
+  fail "the sim role does not render bridge-sim.json5 into the user config dir"
+  printf '%s\n' "$sim_out" | tail -4 | sed 's/^/       /'
+fi
+if grep -q "would write $WORK/home/.config/fm-comms/cyclonedds.xml" <<<"$sim_out"; then
+  pass "the sim role places the Mac's cyclonedds.xml beside it"
+else
+  fail "the sim role leaves the sim bridge without a Cyclone profile"
+fi
+if grep -qE "launchctl|Library/LaunchAgents/" <<<"$sim_out"; then
+  fail "the sim role touches a LaunchAgent"
+else
+  pass "the sim role installs no LaunchAgent"
+fi
+sim_rm="$(HOME="$WORK/home" FM_COMMS_ENV_FILE="$WORK/tailnet.env" ./install.sh uninstall --role bridge-sim --dry-run 2>&1)"
+if grep -q "would run: rm -f $WORK/home/.config/fm-comms/bridge-sim.json5$" <<<"$sim_rm" &&
+  ! grep -q "launchctl" <<<"$sim_rm"; then
+  pass "the sim uninstall removes only the rendered config"
+else
+  fail "the sim uninstall removes more than the rendered config"
+  printf '%s\n' "$sim_rm" | tail -4 | sed 's/^/       /'
 fi
 
 echo "== a version probe that reads empty is diagnosed, not just reported =="

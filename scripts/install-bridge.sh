@@ -30,10 +30,12 @@
 #
 # The same script installs a workstation's SECOND bridge, the Jazzy one its sim
 # runs need, when FM_BRIDGE_VARIANT=sim — which is all scripts/install-bridge-sim.sh
-# sets before handing over, so `./install.sh --role bridge-sim` reaches it. The
-# variant changes what is rendered and what the unit is called, and nothing about
-# how either is installed or restarted. See zenoh/bridge-sim.json5 for why a
-# workstation needs two.
+# sets before handing over, so `./install.sh --role bridge-sim` reaches it. On
+# Linux the variant changes what is rendered and what the unit is called, and
+# nothing about how either is installed or restarted. See zenoh/bridge-sim.json5
+# for why a workstation needs two. On macOS the variant only renders
+# bridge-sim.json5 and cyclonedds.xml into the user config dir and installs no
+# LaunchAgent: fm-sim's agent runs that bridge in a container beside each run.
 #
 # Env (install.sh passes the first two down; both default to off):
 #   FM_DRY_RUN=1          print what would happen, change nothing
@@ -285,21 +287,12 @@ fm_launchctl() {
   fi
 }
 
-# The macOS service path: a user LaunchAgent, rendered and bootstrapped.
-#
-# Nothing here needs sudo, and that is the point — the config and the job belong
-# to the account whose ROS tools they serve. `launchctl bootstrap gui/<uid>`
-# rather than the deprecated `load`: bootstrap reports why a job was refused,
-# where `load` exits 0 on a plist launchd then ignores, which is a bridge that
-# looks installed and is not running.
-install_agent_macos() {
-  fm_log "  rendering $USER_CONF_DIR/bridge.json5"
-  run mkdir -p "$USER_CONF_DIR" "$LOG_DIR" "$(dirname "$AGENT_PLIST")"
-  render_config "$USER_CONF_DIR/bridge.json5" || return 1
-
-  # The DDS side, which launchd cannot inherit from a shell. Rendered rather than
-  # copied: which interface the graph lives on is a per-host fact (see
-  # fm_comms_render cyclonedds).
+# The Mac's Cyclone profile, in the user config dir beside whichever bridge
+# config reads it: the LaunchAgent's, and the sim bridge's that fm-sim's agent
+# mounts into each run. This is the DDS side, which neither launchd nor a
+# container inherits from a shell. Rendered rather than copied: which interface
+# the graph lives on is a per-host fact (see fm_comms_render cyclonedds).
+install_cyclonedds_macos() {
   fm_log "  installing $USER_CONF_DIR/cyclonedds.xml"
   if [ "$FM_DRY_RUN" = "1" ]; then
     fm_log "  would write $USER_CONF_DIR/cyclonedds.xml:"
@@ -314,6 +307,21 @@ install_agent_macos() {
     run install -m 0644 "$dds_tmp" "$USER_CONF_DIR/cyclonedds.xml"
     rm -f "$dds_tmp"
   fi
+}
+
+# The macOS service path: a user LaunchAgent, rendered and bootstrapped.
+#
+# Nothing here needs sudo, and that is the point — the config and the job belong
+# to the account whose ROS tools they serve. `launchctl bootstrap gui/<uid>`
+# rather than the deprecated `load`: bootstrap reports why a job was refused,
+# where `load` exits 0 on a plist launchd then ignores, which is a bridge that
+# looks installed and is not running.
+install_agent_macos() {
+  fm_log "  rendering $USER_CONF_DIR/bridge.json5"
+  run mkdir -p "$USER_CONF_DIR" "$LOG_DIR" "$(dirname "$AGENT_PLIST")"
+  render_config "$USER_CONF_DIR/bridge.json5" || return 1
+
+  install_cyclonedds_macos || return 1
 
   # macOS Local Network privacy, which no error message will mention.
   #
@@ -371,17 +379,49 @@ install_agent_macos() {
   fm_log "  watch it with: tail -f $LOG_DIR/zenoh-bridge.log"
 }
 
-# The sim bridge is a second bridge beside a Linux host's own, so refuse the two
-# hosts where it would be a mistake rather than a second bridge: a Mac, whose
-# cockpit bridge subscribes and never hosts a run, and a sim host, whose own
+# The sim bridge on a Mac is a config and no service. fm-sim's agent runs each
+# run in an OrbStack container without host networking, so the run's DDS graph
+# lives in that container's network namespace and a bridge native to the Mac
+# never sees it. The agent instead starts a bridge container in each run's
+# namespace and mounts this config and cyclonedds.xml into it. So this path
+# renders the two files and installs no LaunchAgent and no binary.
+# Under sudo the two rendered files and their dir are root's, and fm-sim's agent
+# runs as the user. Hand back exactly those three paths, and only when they sit in
+# that user's home: the dir comes from the environment, and a recursive chown of
+# whatever it names could take ownership of anything.
+hand_back_sim_config() {
+  [ "$(id -u)" = 0 ] && [ "$FM_AGENT_USER" != root ] || return 0
+  local owner_home
+  owner_home="$(dscl . -read "/Users/$FM_AGENT_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  case "$USER_CONF_DIR" in
+    "$owner_home"/?*) ;;
+    *)
+      fm_warn "  $USER_CONF_DIR is not under $FM_AGENT_USER's home (${owner_home:-unknown});"
+      fm_warn "  leaving it root-owned — re-run without sudo so fm-sim's agent can read it"
+      return 0
+      ;;
+  esac
+  run chown "$FM_AGENT_USER" "$USER_CONF_DIR" "$USER_CONF_DIR/$CONFIG_FILE" \
+    "$USER_CONF_DIR/cyclonedds.xml" ||
+    fm_warn "  could not hand $USER_CONF_DIR back to $FM_AGENT_USER; fm-sim's agent may not read it"
+}
+
+install_config_macos_sim() {
+  fm_log "  rendering $USER_CONF_DIR/$CONFIG_FILE"
+  run mkdir -p "$USER_CONF_DIR"
+  render_config "$USER_CONF_DIR/$CONFIG_FILE" || return 1
+  install_cyclonedds_macos || return 1
+  hand_back_sim_config
+  fm_log "  no LaunchAgent: fm-sim's agent runs this bridge beside each run, reading"
+  fm_log "  $USER_CONF_DIR/$CONFIG_FILE and $USER_CONF_DIR/cyclonedds.xml"
+}
+
+# The sim bridge is a second bridge beside a host's own, so refuse the host
+# where it would be a mistake rather than a second bridge: a sim host, whose own
 # bridge already is this profile — a second copy would route every sim topic
 # twice under two node names.
 require_sim_host() {
-  local os="$1" profile
-  if [ "$os" != linux ]; then
-    fm_err "the sim bridge is a Linux unit for a workstation that hosts sim runs; this host is $os"
-    return 1
-  fi
+  local profile
   profile="$(fm_comms_bridge_profile)" || return 1
   if [ "$profile" = sim ]; then
     fm_err "this host's workload is 'sim', so its own bridge already carries the sim profile"
@@ -400,21 +440,23 @@ do_install() {
   # transport running beside the one it already speaks.
   fm_comms_require_transport || return 1
   if [ "$FM_BRIDGE_VARIANT" = sim ]; then
-    require_sim_host "$os" || return 1
+    require_sim_host || return 1
   fi
 
   fm_log "Installing the Zenoh ROS 2 $NAME (zenoh $version) on $os"
 
-  case "$os" in
-    linux) install_linux "$version" ;;
-    macos) install_macos "$version" ;;
+  case "$os:$FM_BRIDGE_VARIANT" in
+    linux:*)   install_linux "$version" ;;
+    macos:sim) fm_log "  no binary: the sim bridge on a Mac runs in fm-sim's container" ;;
+    macos:*)   install_macos "$version" ;;
   esac
 
   place_env || return 0
 
-  case "$os" in
-    linux) install_unit_linux ;;
-    macos) install_agent_macos ;;
+  case "$os:$FM_BRIDGE_VARIANT" in
+    linux:*)   install_unit_linux ;;
+    macos:sim) install_config_macos_sim ;;
+    macos:*)   install_agent_macos ;;
   esac
 
   fm_ok "$NAME install complete."
@@ -443,10 +485,24 @@ do_uninstall() {
       fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"
     fi
   elif [ "$FM_BRIDGE_VARIANT" = sim ]; then
-    fm_log "  nothing to remove: the sim bridge is never installed on $os"
+    # The sim config, and the Cyclone profile unless the Mac's own bridge still
+    # reads it. The env file holds the operator's own values and always stays.
+    run rm -f "$USER_CONF_DIR/$CONFIG_FILE"
+    if [ -f "$USER_CONF_DIR/bridge.json5" ]; then
+      fm_log "  left in place: $ENV_FILE, and $USER_CONF_DIR/cyclonedds.xml, which the Mac's own bridge uses"
+    else
+      run rm -f "$USER_CONF_DIR/cyclonedds.xml"
+      fm_log "  left in place: $ENV_FILE"
+    fi
   else
     fm_launchctl bootout "gui/$FM_AGENT_UID/$FM_LAUNCHD_BRIDGE_LABEL" 2>/dev/null || true
-    run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5" "$USER_CONF_DIR/cyclonedds.xml"
+    run rm -f "$AGENT_PLIST" "$USER_CONF_DIR/bridge.json5"
+    # The sim config reads the same Cyclone profile, so it stays while that does.
+    if [ -f "$USER_CONF_DIR/bridge-sim.json5" ]; then
+      fm_log "  left in place: $USER_CONF_DIR/cyclonedds.xml, which the sim bridge config uses"
+    else
+      run rm -f "$USER_CONF_DIR/cyclonedds.xml"
+    fi
     # The logs outlive the job on purpose: the reason a bridge was removed is
     # usually in them, and this is the moment someone wants to read it.
     fm_log "  left in place: $ENV_FILE, $LOG_DIR, and the zenoh-bridge-ros2dds binary"

@@ -77,7 +77,8 @@ needs a bridge for the same reason a rig does — under this profile its DDS gra
 is loopback-only, so without one its ROS tools see nothing the fleet publishes.
 
 `--role bridge-sim` is a second bridge, for a workstation that hosts fm-sim
-runs; see the `workstation` profile below for why it needs one.
+runs; see the `workstation` profile below for why it needs one. On a Mac it
+renders the sim bridge's config for fm-sim's agent and installs no service.
 
 Inspect before running, or see what a run would do:
 
@@ -172,7 +173,15 @@ without doubling a sample, because each bridge routes only its own distro's
 writers; `zenoh/bridge-sim.json5` gives the reasoning. A reinstall restarts the
 sim unit on a changed render exactly as the main installer does, and a change to
 the shared `cyclonedds.xml` try-restarts the other unit too. The installer
-refuses a Mac and a host whose workload is already `sim`.
+refuses a host whose workload is already `sim`.
+
+On a Mac, `--role bridge-sim` installs no service. fm-sim's agent runs each run
+in an OrbStack container without host networking, so a bridge native to the Mac
+never sees the run's DDS graph. The agent starts a bridge container in each
+run's network namespace instead, and the installer only renders what that
+bridge reads: `~/.config/fm-comms/bridge-sim.json5`, beside the
+`cyclonedds.xml` the Mac's own bridge already uses. Uninstalling removes the
+rendered sim config and nothing else.
 
 `sim` is for a host running fm-sim runs, which the desktop and `fm sim` drive
 through the sim agent's `fm/sim/<host>/*` queryables. The agent starts, resets,
@@ -218,7 +227,7 @@ them exactly as an install would and prints the result instead of writing it:
 ./run.sh render show              # this host's facts, and where each came from
 ./run.sh render bridge            # what /etc/fm-comms/bridge.json5 would be
 ./run.sh render bridge-unit       # what fm-zenoh-bridge.service would be
-./run.sh render bridge-sim        # a workstation's /etc/fm-comms/bridge-sim.json5
+./run.sh render bridge-sim        # bridge-sim.json5 for a workstation or a Mac
 ./run.sh render bridge-sim-unit   # what fm-zenoh-bridge-sim.service would be
 ./run.sh render router
 ./run.sh render launchd           # the router's LaunchDaemon plist
