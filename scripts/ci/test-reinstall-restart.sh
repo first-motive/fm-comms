@@ -106,7 +106,7 @@ render_profile() {
 
 # Run the bridge installer against the scratch tree, for one OS and one profile.
 run_installer() {
-  local uname_s="$1" profile="$2"
+  local uname_s="$1" profile="$2" action="${3:-install}"
   PATH="$WORKDIR/bin:$PATH" \
   FM_TEST_UNAME_S="$uname_s" \
   FM_DRY_RUN=1 \
@@ -117,7 +117,7 @@ run_installer() {
   FM_COMMS_USER_CONF_DIR="$WORKDIR/etc" \
   FM_COMMS_USER_LOG_DIR="$WORKDIR/log" \
   FM_BRIDGE_PROFILE="$profile" \
-    "$ROOT/scripts/install-bridge.sh" install 2>&1
+    "$ROOT/scripts/install-bridge.sh" "$action" 2>&1
 }
 
 # Run the sim bridge's installer the same way, through its own script. Never
@@ -233,11 +233,52 @@ main() {
   check "sim: an unchanged config try-restarts instead" "$out" \
     "config unchanged — try-restart fm-zenoh-bridge-sim.service"
 
-  # Where a second bridge would be a mistake, it is refused before anything is
-  # placed: a Mac hosts no sim run, and a sim host's own bridge is this profile.
+  # On a Mac the sim bridge runs in fm-sim's container beside each run, so the
+  # installer renders its config and the Cyclone profile and installs no agent.
+  rm -f "$WORKDIR/etc/bridge-sim.json5"
   out="$(run_sim_installer Darwin install workstation)"
-  check "sim: refused on macOS" "$out" "the sim bridge is a Linux unit"
-  check_absent "sim: nothing is installed on macOS" "$out" "would run:"
+  check "sim on macOS: the config is rendered to the user config dir" "$out" \
+    "would write $WORKDIR/etc/bridge-sim.json5"
+  check "sim on macOS: the config takes a node name of its own" "$out" \
+    'nodename: "zenoh_bridge_fm_ws_01_sim"'
+  check "sim on macOS: the Cyclone profile is placed beside it" "$out" \
+    "would write $WORKDIR/etc/cyclonedds.xml"
+  check "sim on macOS: the log names who runs the bridge" "$out" \
+    "fm-sim's agent runs this bridge beside each run"
+  check_absent "sim on macOS: no LaunchAgent is touched" "$out" "launchctl"
+  check_absent "sim on macOS: no LaunchAgent is written" "$out" "Library/LaunchAgents/"
+
+  # The Cyclone profile is shared by the Mac's two bridge configs, so each
+  # uninstall removes it only when the other config is gone.
+  : >"$WORKDIR/etc/bridge.json5"
+  out="$(run_sim_installer Darwin uninstall workstation)"
+  check "sim on macOS: uninstall removes the rendered config" "$out" \
+    "would run: rm -f $WORKDIR/etc/bridge-sim.json5"
+  check "sim on macOS: uninstall says the main bridge keeps the Cyclone profile" "$out" \
+    "cyclonedds.xml, which the Mac's own bridge uses"
+  check_absent "sim on macOS: uninstall leaves the Cyclone profile" "$out" \
+    "rm -f $WORKDIR/etc/cyclonedds.xml"
+  check_absent "sim on macOS: uninstall leaves the Mac's own bridge" "$out" "launchctl"
+  check_absent "sim on macOS: uninstall leaves the Mac's own LaunchAgent" "$out" \
+    "Library/LaunchAgents/"
+  rm -f "$WORKDIR/etc/bridge.json5"
+  out="$(run_sim_installer Darwin uninstall workstation)"
+  check "sim on macOS: uninstall alone removes the Cyclone profile" "$out" \
+    "would run: rm -f $WORKDIR/etc/cyclonedds.xml"
+
+  : >"$WORKDIR/etc/bridge-sim.json5"
+  out="$(run_installer Darwin cockpit uninstall)"
+  check "macos: uninstall keeps the Cyclone profile the sim config reads" "$out" \
+    "left in place: $WORKDIR/etc/cyclonedds.xml, which the sim bridge config uses"
+  check_absent "macos: uninstall does not remove the shared Cyclone profile" "$out" \
+    "rm -f $WORKDIR/etc/cyclonedds.xml"
+  rm -f "$WORKDIR/etc/bridge-sim.json5"
+  out="$(run_installer Darwin cockpit uninstall)"
+  check "macos: uninstall alone removes the Cyclone profile" "$out" \
+    "would run: rm -f $WORKDIR/etc/cyclonedds.xml"
+
+  # Where a second bridge would be a mistake, it is refused before anything is
+  # placed: a sim host's own bridge is this profile.
   out="$(run_sim_installer Linux install sim)"
   check "sim: refused on a sim host" "$out" "its own bridge already carries the sim profile"
   check_absent "sim: nothing is installed on a sim host" "$out" "would run:"

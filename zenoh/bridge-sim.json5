@@ -32,7 +32,9 @@
 /// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
 /// result to /etc/fm-comms/bridge.json5 on a sim host, and to
 /// /etc/fm-comms/bridge-sim.json5 for a workstation's second bridge
-/// (`./install.sh --role bridge-sim`). Committed files carry placeholders only —
+/// (`./install.sh --role bridge-sim`). On a Mac the same role writes it to
+/// ~/.config/fm-comms/bridge-sim.json5, for the bridge fm-sim's agent runs in a
+/// container beside each run. Committed files carry placeholders only —
 /// never a real address. Read the render before installing it:
 ///
 ///     ./run.sh render bridge            on a sim host

@@ -9,8 +9,15 @@
 # /etc/fm-comms/bridge-sim.json5, and run by fm-zenoh-bridge-sim.service with
 # ROS_DISTRO=jazzy. zenoh/bridge-sim.json5 says why the two can share a namespace.
 #
-# Everything else is install-bridge.sh's, unchanged — the pinned package, the env
-# file, the Cyclone profile, restart-on-change — so this script only names the
+# On a Mac this script installs no service. fm-sim's agent runs each run in an
+# OrbStack container without host networking, so a bridge native to the Mac
+# never sees the run's DDS graph. The agent runs the bridge in a container
+# beside each run instead, and this script only renders its config to
+# ~/.config/fm-comms/bridge-sim.json5 beside the Mac's cyclonedds.xml.
+#
+# On Linux everything else is install-bridge.sh's, unchanged — the pinned
+# package, the env file, the Cyclone profile, restart-on-change. On a Mac only the
+# env file and the Cyclone profile apply. Either way this script only names the
 # variant and hands over. Read the render before installing it:
 #     ./run.sh render bridge-sim
 #     ./run.sh render bridge-sim-unit
