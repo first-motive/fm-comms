@@ -34,7 +34,7 @@ jobs:
     name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # Pin the version so CI matches local dev — the runner's bundled
       # shellcheck drifts and flags findings a newer release dropped.
       - name: Install shellcheck 0.11.0
@@ -62,7 +62,7 @@ jobs:
     name: episodes tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc  # v6.4.3
       # --frozen so CI fails on a stale uv.lock rather than silently resolving
       # something the rigs will never install.
