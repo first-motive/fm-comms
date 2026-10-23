@@ -253,8 +253,11 @@ install_unit_linux() {
     fm_log "  config unchanged — try-restart $UNIT"
     run sudo systemctl try-restart "$UNIT"
   fi
-  # try-restart, so a sibling that is not installed stays not installed.
-  if [ "$dds_changed" = "1" ]; then
+  # Only a sibling whose unit is installed. `try-restart` leaves a stopped unit
+  # stopped, but on a unit systemd has never seen it fails ("Unit not found"),
+  # and that failure ended the sim-cloud role's first bridge install on a fresh
+  # host before the sim bridge existed (2026-10-23). Same test as uninstall's.
+  if [ "$dds_changed" = "1" ] && [ -f "/etc/systemd/system/$SIBLING_UNIT" ]; then
     fm_log "  cyclonedds.xml changed — try-restart $SIBLING_UNIT, which reads it too"
     run sudo systemctl try-restart "$SIBLING_UNIT"
   fi
