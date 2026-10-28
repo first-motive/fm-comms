@@ -107,6 +107,10 @@
           "^/perception/chest/can$",
           "^/perception/chest/paper$",
           "^/perception/wrist/can$",
+          /// The motion fm-skills planned with MoveIt, every segment, published
+          /// once per move before the arm starts. The viewer draws it against
+          /// the path the arm then takes.
+          "^/display_planned_path$",
           /// Chest and wrist cameras, compressed only. A raw frame is 20-50x
           /// the bytes and nothing on the fabric reads one.
           "^/cam_[a-z0-9_]+/image_raw/compressed$",
