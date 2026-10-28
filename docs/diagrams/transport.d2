@@ -7,13 +7,15 @@
 # Rune — always on, wired, tailnet-attached — never on the workstation that is
 # wiped and rebooted, and never inside Rune's own CI guest. It binds two sockets:
 # Rune's LAN address for the office, and its tailnet address for everywhere else.
+# The workstation is the one host with two bridges: its own, in Humble, and a
+# Jazzy one for the sim image's runs, both in its namespace.
 ...@styles
 
 direction: down
 
 title: |md
   # Zenoh Transport
-  One router. One bridge per host. DDS never leaves a machine.
+  One router. A bridge per host and distro. DDS stays local.
 | { near: top-center; style.font-size: 26 }
 
 rune: Rune — office Mac mini {
@@ -46,8 +48,15 @@ ws: Workstation {
   bridge: "" {
     grid-rows: 3
     class: block
-    r: Processor { class: role }
-    p: bridge-processor { class: pkg }
+    r: Workstation (Humble) { class: role }
+    p: bridge-workstation { class: pkg }
+    a: zenoh-bridge-ros2dds { class: art }
+  }
+  sim: "" {
+    grid-rows: 3
+    class: block
+    r: Sim runs (Jazzy) { class: role }
+    p: bridge-sim { class: pkg }
     a: zenoh-bridge-ros2dds { class: art }
   }
   dds: "DDS on loopback\nsim · inference · training" { class: topic }
@@ -82,9 +91,11 @@ mac: Mac — cockpit {
 }
 
 ws.dds -> ws.bridge: allowed topics only
+ws.dds -> ws.sim: sim topics only
 rec.dds -> rec.bridge: allowed topics only
 mac.dds -> mac.bridge: allowed topics only
 
 ws.bridge -> rune.host: tcp/rune:7447 — LAN in the office
+ws.sim -> rune.host
 rec.bridge -> rune.host: tcp/rune:7447 — LAN in the office
 mac.bridge -> rune.host: tcp/rune:7447 — tailnet off-site

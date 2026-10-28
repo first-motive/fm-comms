@@ -59,6 +59,7 @@ Pick the role this host plays:
 ```bash
 ./install.sh --role router      # Rune: run zenohd under launchd
 ./install.sh --role bridge      # a rig or a Mac: run zenoh-bridge-ros2dds
+./install.sh --role bridge-sim  # a workstation that hosts sim runs: add the Jazzy sim bridge
 ./install.sh --role client      # a laptop: the CLI tools only
 ./install.sh --role endpoint    # a host with no DDS graph: the shared env file only
 ```
@@ -75,6 +76,10 @@ on macOS it places a user LaunchAgent, up while someone is logged in. The Mac
 needs a bridge for the same reason a rig does — under this profile its DDS graph
 is loopback-only, so without one its ROS tools see nothing the fleet publishes.
 
+`--role bridge-sim` is a second bridge, for a workstation that hosts fm-sim
+runs; see the `workstation` profile below for why it needs one. On a Mac it
+renders the sim bridge's config for fm-sim's agent and installs no service.
+
 Inspect before running, or see what a run would do:
 
 ```bash
@@ -86,6 +91,7 @@ Remove what the installer placed:
 
 ```bash
 ./install.sh uninstall --role router
+./install.sh uninstall --role bridge-sim   # the sim bridge only; the host's own stays
 ```
 
 ## Usage
@@ -126,6 +132,8 @@ processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state and cameras out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
+sim          a sim host: run state and 10 Hz cameras out, nothing in;
+             also a workstation's second, Jazzy bridge (--role bridge-sim)
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
 
@@ -140,6 +148,66 @@ poses, and compressed camera frames go out, and no topic comes back.
 tower is genuinely both machines: the sim publishes the joint states the cockpit
 renders while the dataset engine runs beside it. Under `processor` alone its
 bridge held a session and carried no state (fm-comms#20).
+
+A workstation that hosts fm-sim runs needs a second bridge, because the sim image
+is Jazzy and the workstation's own bridge runs Humble. A bridge discovers only
+the nodes of the distro it is told: the GID layout in `ros_discovery_info`
+changed in Iron, and the plugin routes a DDS writer only once a node there has
+claimed it. fm-ws-01's Humble bridge, with every sim topic allowlisted, routed
+none of them; a Jazzy one beside it routed all of them. So
+`./install.sh --role bridge-sim` adds that bridge without touching the first:
+
+| | the host's bridge | the sim bridge |
+| --- | --- | --- |
+| unit | `fm-zenoh-bridge.service` | `fm-zenoh-bridge-sim.service` |
+| config | `/etc/fm-comms/bridge.json5` | `/etc/fm-comms/bridge-sim.json5` |
+| profile | the card's `workload` | `sim` |
+| `ROS_DISTRO` | `FM_ROS_DISTRO`, default `humble` | `FM_SIM_ROS_DISTRO`, default `jazzy` |
+| node name | `zenoh_bridge_fm_ws_01` | `zenoh_bridge_fm_ws_01_sim` |
+| namespace | `/fm_ws_01` | `/fm_ws_01` |
+
+Both share the namespace, so the desktop's `fm_ws_01/**` subscription reads the
+sim run with nothing configured on its side, and the same loopback DDS, Cyclone
+profile, and env file. Their keys overlap (`/rosout`, `/tf`, `/joint_states`)
+without doubling a sample, because each bridge routes only its own distro's
+writers; `zenoh/bridge-sim.json5` gives the reasoning. A reinstall restarts the
+sim unit on a changed render exactly as the main installer does, and a change to
+the shared `cyclonedds.xml` try-restarts the other unit too. The installer
+refuses a host whose workload is already `sim`.
+
+On a Mac, `--role bridge-sim` installs no service. fm-sim's agent runs each run
+in an OrbStack container without host networking, so a bridge native to the Mac
+never sees the run's DDS graph. The agent starts a bridge container in each
+run's network namespace instead, and the installer only renders what that
+bridge reads: `~/.config/fm-comms/bridge-sim.json5`, beside the
+`cyclonedds.xml` the Mac's own bridge already uses. Uninstalling removes the
+rendered sim config and nothing else.
+
+`sim` is for a host running fm-sim runs, which the desktop and `fm sim` drive
+through the sim agent's `fm/sim/<host>/*` queryables. The agent starts, resets,
+and stops a run locally, so like `robot-anvil` the profile takes no topic inward,
+and it answers no service either: a reset goes through the agent's `reset` verb,
+which calls `/sim/reset` on the host. What it publishes is this list and nothing
+else:
+
+```
+/joint_states  /tf  /tf_static  /clock  /rosout
+/sim/objects  /sim/markers  /sim/outcome
+/task/events
+/perception/chest/can  /perception/chest/paper  /perception/wrist/can
+/cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
+```
+
+The `/task` and `/perception` names are the ones fm-skills publishes today, so a
+new one is added here and in the profile together. `check-transport.py` holds
+the profile to this list in both directions. Every name must pass, and every
+rule must be either one name above written literally (`^/sim/objects$`, no
+regex metacharacters; a concrete camera name counts) or one of the two camera
+patterns
+`^/cam_[a-z0-9_]+/image_raw/compressed$` and `^/cam_[a-z0-9_]+/camera_info$`,
+string for string. Any other rule fails the pull request, as does a rule that
+admits a known neighbour (`/sim/reset`, `/task/pick_place`, a raw `image_raw`
+frame, `/commanded_ee_right`).
 
 `cockpit` is the mirror of the others, and reads backwards on purpose. A rig
 publishes what it produces and accepts a few commands; the Mac subscribes to what
@@ -158,6 +226,9 @@ them exactly as an install would and prints the result instead of writing it:
 ```bash
 ./run.sh render show              # this host's facts, and where each came from
 ./run.sh render bridge            # what /etc/fm-comms/bridge.json5 would be
+./run.sh render bridge-unit       # what fm-zenoh-bridge.service would be
+./run.sh render bridge-sim        # bridge-sim.json5 for a workstation or a Mac
+./run.sh render bridge-sim-unit   # what fm-zenoh-bridge-sim.service would be
 ./run.sh render router
 ./run.sh render launchd           # the router's LaunchDaemon plist
 ./run.sh render launchagent       # the Mac bridge's LaunchAgent plist

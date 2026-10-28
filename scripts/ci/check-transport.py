@@ -21,8 +21,12 @@ Three passes, in order of how early they catch a mistake:
    fleet depends on: the router binds exactly two non-wildcard endpoints (its LAN
    address and its tailnet address), every bridge is a client with multicast off,
    the recorder never publishes raw frames, the robot never accepts a trajectory
-   from off-rig, the anvil workcell accepts nothing inbound at all, and the
-   cockpit Mac publishes teleop and nothing else.
+   from off-rig, the anvil workcell accepts nothing inbound at all, the sim host
+   carries exactly the simulation contract's topic list with its cameras capped,
+   a workstation's second (Jazzy) sim bridge holds that same contract in the
+   workstation's namespace under a node name of its own, its unit differs from
+   the workstation's only in distro, config, and description, and the cockpit
+   Mac publishes teleop and nothing else.
 
 Run it the same way CI does::
 
@@ -31,8 +35,10 @@ Run it the same way CI does::
 
 from __future__ import annotations
 
+import copy
 import json
 import gzip
+import math
 import os
 import re
 import subprocess
@@ -71,11 +77,23 @@ CARDS = {
         "robot": "anvil-openarm-v2",
     },
     "workstation": {"name": "fm-ws-01", "role": "workstation", "workload": "workstation"},
+    "sim": {"name": "fm-ws-01", "role": "workstation", "workload": "sim"},
     "cockpit": {"name": "fm-mac-02", "role": "mac", "workload": "cockpit"},
     "router": {"name": "fm-mac-01", "role": "mac", "workload": "router"},
 }
 
-BRIDGE_PROFILES = ("recorder", "processor", "robot", "robot-anvil", "workstation", "cockpit")
+# Every template on disk is a profile, so a new bridge-<profile>.json5 is graded
+# the day it lands; one with no fixture card above fails rather than going
+# unrendered.
+BRIDGE_PROFILES = tuple(sorted(
+    path.name.removeprefix("bridge-").removesuffix(".json5")
+    for path in (ROOT / "zenoh").glob("bridge-*.json5")
+))
+
+# Profiles that accept no inbound topic at all. Each is driven through an
+# agent's queryables on the host, so a subscriber rule there is an unreviewed
+# command path into the controllers.
+NO_INBOUND_PROFILES = ("robot-anvil", "sim")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
 FM_ROUTER_ENDPOINT=tcp/fixture-router:7447
@@ -231,9 +249,12 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/arm_controller/joint_trajectory"),
         ("subscribers", "/joint_trajectory_controller/joint_trajectory"),
         # Sim cameras render locally and are the largest thing this host could
-        # put on the wire.
+        # put on the wire. Their compressed frames leave on the Jazzy sim
+        # bridge (bridge-sim.json5); the raw frames leave on neither.
         ("publishers", "/head/color/image_raw"),
         ("publishers", "/wrist/color/image_raw"),
+        ("publishers", "/cam_chest/image_raw"),
+        ("publishers", "/cam_wrist_right/image_raw"),
     ],
     "cockpit": [
         # The Mac publishes teleop, and teleop is Servo's jog topics — which the
@@ -250,6 +271,65 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/fm_rec_01/wrist/color/image_raw"),
     ],
 }
+
+
+# The sim host's topic list, the one README.md states for the `sim` profile:
+# state out, and nothing else. `/task/*` and `/perception/*` are held to the
+# topics fm-skills publishes today. Graded both ways: every name here must pass,
+# every rule must admit a name here, and no rule of any kind may admit a name in
+# SIM_OUTSIDE_CONTRACT.
+SIM_CONTRACT = {
+    "publishers": [
+        "/joint_states",
+        "/tf",
+        "/tf_static",
+        "/clock",
+        "/rosout",
+        "/sim/objects",
+        "/sim/markers",
+        "/sim/outcome",
+        "/task/events",
+        "/perception/chest/can",
+        "/perception/chest/paper",
+        "/perception/wrist/can",
+        "/cam_chest/image_raw/compressed",
+        "/cam_chest/camera_info",
+        "/cam_wrist_right/image_raw/compressed",
+        "/cam_wrist_right/camera_info",
+    ],
+}
+
+# The only two non-literal rules the sim profile may carry, compared string for
+# string. The role is the one free part of a camera topic's name.
+SIM_CAMERA_RULES = (
+    "^/cam_[a-z0-9_]+/image_raw/compressed$",
+    "^/cam_[a-z0-9_]+/camera_info$",
+)
+
+# The sim profile's forbidden names, graded against every rule kind rather than
+# through FORBIDDEN_TOPICS above. Each sits beside the contract where a rule
+# written a little too wide would admit it: a sibling under /sim, /task or
+# /perception, the raw frame beside a compressed one, the reset service the
+# agent alone may call, and the commands that move the simulated arm.
+SIM_OUTSIDE_CONTRACT = [
+    "/sim/debug",
+    "/sim/reset",
+    "/task/cmd",
+    "/task/pick_place",
+    "/perception/wrist/arm",
+    "/perception/wrist/paper",
+    "/cam_chest/image_raw",
+    "/cam_wrist_right/image_raw",
+    "/commanded_ee_right",
+    "/arm_controller/joint_trajectory",
+    "/controller_manager/switch_controller",
+    "/robot_description",
+]
+
+# Every camera topic the sim host publishes, and the rate it may cross at. A
+# camera at its render rate is the largest stream the host produces.
+SIM_CAMERA_TOPICS = [t for t in SIM_CONTRACT["publishers"] if t.startswith("/cam_")]
+SIM_CAMERA_MAX_HZ = 10.0
 
 
 # Topic names a bridge MUST carry, and the profile each belongs to. The mirror
@@ -278,6 +358,7 @@ REQUIRED_TOPICS = {
         ("publishers", "/process/state"),
         ("subscribers", "/process/start"),
     ],
+    "sim": [(kind, topic) for kind, topics in SIM_CONTRACT.items() for topic in topics],
     "cockpit": [("subscribers", "/fm_ws_01/joint_states")],
 }
 
@@ -297,8 +378,62 @@ def matches(pattern: str, topic: str) -> bool:
         return False
 
 
-def check_bridge(profile: str, config: dict) -> None:
-    where = f"bridge-{profile}.json5"
+def frequency_caps(where: str, ros2dds: dict) -> list[tuple[str, float]]:
+    """Parse the bridge's `pub_max_frequencies` rules, `<regex>=<float>` each.
+
+    A rule that does not parse, or whose rate is not a finite positive number,
+    is reported rather than read as "no cap" — `nan` compares false against
+    every limit and would pass any ceiling check.
+    """
+    caps = []
+    for rule in ros2dds.get("pub_max_frequencies", []):
+        pattern, sep, hz = rule.rpartition("=")
+        try:
+            value = float(hz)
+        except ValueError:
+            value = math.nan
+        if not sep or not math.isfinite(value) or value <= 0:
+            fail(where, f"pub_max_frequencies rule {rule!r} is not '<regex>=<finite positive float>'")
+            continue
+        caps.append((pattern, value))
+    return caps
+
+
+def max_frequency(caps: list[tuple[str, float]], topic: str) -> float | None:
+    """The lowest parsed cap that applies to this topic, or None."""
+    hits = [hz for pattern, hz in caps if matches(pattern, topic)]
+    return min(hits) if hits else None
+
+
+def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
+    """Grade the sim profile against the contract list in both directions."""
+    extra_kinds = set(allow) - set(SIM_CONTRACT)
+    if extra_kinds:
+        fail(where, f"carries rule kinds outside the contract: {sorted(extra_kinds)}")
+    # Exact, not sampled: a rule is either one contract topic spelled literally,
+    # or one of the two fixed camera patterns, string for string. A wildcard
+    # that happens to dodge every probe below still fails here.
+    for pattern in allow.get("publishers", []):
+        body = pattern[1:-1] if pattern.startswith("^") and pattern.endswith("$") else None
+        is_literal = body is not None and re.escape(body) == body and body in SIM_CONTRACT["publishers"]
+        if not is_literal and pattern not in SIM_CAMERA_RULES:
+            fail(where, f"publisher rule {pattern!r} is neither a literal contract topic nor a fixed camera pattern")
+    for kind, rules in allow.items():
+        for pattern in rules:
+            for topic in SIM_OUTSIDE_CONTRACT:
+                if matches(pattern, topic):
+                    fail(where, f"{kind[:-1]} rule {pattern!r} admits {topic!r}, which is outside the contract")
+    caps = frequency_caps(where, ros2dds)
+    for topic in SIM_CAMERA_TOPICS:
+        cap = max_frequency(caps, topic)
+        if cap is None:
+            fail(where, f"camera topic {topic!r} has no pub_max_frequencies cap")
+        elif cap > SIM_CAMERA_MAX_HZ:
+            fail(where, f"camera topic {topic!r} is capped at {cap} Hz, above {SIM_CAMERA_MAX_HZ}")
+
+
+def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
+    where = where or f"bridge-{profile}.json5"
     if config.get("mode") != "client":
         fail(where, f"mode is {config.get('mode')!r}, expected 'client'")
     if config.get("scouting", {}).get("multicast", {}).get("enabled") is not False:
@@ -350,8 +485,11 @@ def check_bridge(profile: str, config: dict) -> None:
     # have at all. Its whole safety property is that no key on the fabric reaches
     # a DDS writer on the workcell, and one added rule would restore an inbound
     # path that no forbidden-topic test would notice.
-    if profile == "robot-anvil" and allow.get("subscribers"):
-        fail(where, "carries subscriber rules — an anvil host accepts no inbound topic")
+    if profile in NO_INBOUND_PROFILES and allow.get("subscribers"):
+        fail(where, f"carries subscriber rules — a {profile} host accepts no inbound topic")
+
+    if profile == "sim":
+        check_sim_contract(where, ros2dds, allow)
 
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):
@@ -365,6 +503,138 @@ def check_bridge(profile: str, config: dict) -> None:
         for pattern in allow.get(kind, []):
             if not (pattern.startswith("^") and pattern.endswith("$")):
                 fail(where, f"unanchored {kind[:-1]} rule: {pattern!r}")
+
+
+def _ros2dds(config: dict) -> dict:
+    return config["plugins"]["ros2dds"]
+
+
+# Ways the sim profile could drift, each applied to the real rendered config,
+# with the finding check_bridge must report for it. A grader that passes a
+# broken profile is worse than none, so the grader is graded too.
+SIM_MUTATIONS = (
+    ("a reset service rule",
+     lambda c: _ros2dds(c)["allow"].update(service_servers=["^/sim/reset$"]),
+     "rule kinds outside the contract"),
+    ("a service client rule",
+     lambda c: _ros2dds(c)["allow"].update(service_clients=["^/sim/reset$"]),
+     "rule kinds outside the contract"),
+    ("a subscriber rule",
+     lambda c: _ros2dds(c)["allow"].update(subscribers=["^/commanded_ee_right$"]),
+     "accepts no inbound topic"),
+    ("a /sim wildcard",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/sim/.*$"),
+     "outside the contract"),
+    ("a camera cap at 30 Hz",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule.replace("=10", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "above 10.0"),
+    ("a deleted camera cap",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "compressed" not in rule]),
+     "has no pub_max_frequencies cap"),
+    ("a non-finite camera cap",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule.replace("=10", "=nan") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "finite positive float"),
+    ("a wildcard that dodges every probe",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/perception/chest/.*$"),
+     "neither a literal contract topic"),
+    ("a metacharacter in a literal",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/task/even.s$"),
+     "neither a literal contract topic"),
+    ("a widened camera pattern",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_.*/image_raw/compressed$"),
+     "neither a literal contract topic"),
+)
+
+
+def check_mutations(name: str, config, mutations: tuple, check) -> None:
+    """Grade each mutation case against the check's real findings."""
+    for description, mutate, expected in mutations:
+        broken = copy.deepcopy(config)
+        mutate(broken)
+        start = len(failures)
+        check(broken)
+        found = failures[start:]
+        del failures[start:]
+        if not any(expected in line for line in found):
+            fail(f"{name} self-test", f"{description} was not reported (want {expected!r}, got {found!r})")
+
+
+# The node name each bridge takes. A host's one bridge is zenoh_bridge_<ns>; a
+# workstation's second, Jazzy bridge for sim runs is the same plus `_sim`.
+SIM_PAIR_NODENAME_SUFFIX = "_sim"
+
+
+def check_sim_pair(main: dict, sim: dict) -> None:
+    """A workstation's sim bridge shares its namespace and not its node name.
+
+    The namespace is what lets the desktop's `<host>/**` subscription read the
+    sim run with nothing configured on its side; the node name is what keeps the
+    two bridges apart in the ROS graph and in each bridge's admin space.
+    """
+    where = "bridge-sim.json5 (workstation)"
+    main_ros2dds, sim_ros2dds = _ros2dds(main), _ros2dds(sim)
+    if sim_ros2dds.get("namespace") != main_ros2dds.get("namespace"):
+        fail(where, f"namespace {sim_ros2dds.get('namespace')!r} is not the workstation's "
+                    f"{main_ros2dds.get('namespace')!r}, so the desktop would not read it")
+    want = f"{main_ros2dds.get('nodename')}{SIM_PAIR_NODENAME_SUFFIX}"
+    if sim_ros2dds.get("nodename") != want:
+        fail(where, f"nodename is {sim_ros2dds.get('nodename')!r}, want {want!r} beside the workstation's own")
+
+
+PAIR_MUTATIONS = (
+    ("a shared node name",
+     lambda pair: _ros2dds(pair[1]).update(nodename=_ros2dds(pair[0])["nodename"]),
+     "nodename is"),
+    ("a namespace of its own",
+     lambda pair: _ros2dds(pair[1]).update(namespace="/fm_ws_01_sim"),
+     "is not the workstation's"),
+)
+
+
+# The unit lines the two bridges may differ in. Every other line must match, so
+# the sim bridge cannot drift onto another DDS island, Cyclone profile, or env
+# file than the bridge it runs beside.
+UNIT_VARIANT_KEYS = ("Description=", "Environment=ROS_DISTRO=", "ExecStart=")
+
+
+def unit_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
+
+
+def check_units(main: str, sim: str) -> None:
+    """The sim unit is the workstation's, with its distro, config, and name changed."""
+    for where, text, distro, config in (
+        ("fm-zenoh-bridge.service", main, "humble", "/etc/fm-comms/bridge.json5"),
+        ("fm-zenoh-bridge-sim.service", sim, "jazzy", "/etc/fm-comms/bridge-sim.json5"),
+    ):
+        lines = unit_lines(text)
+        if "${FM_" in text:
+            fail(where, "rendered unit still has a placeholder")
+        if f"Environment=ROS_DISTRO={distro}" not in lines:
+            fail(where, f"does not run with ROS_DISTRO={distro}")
+        if not any(line.startswith("ExecStart=") and line.endswith(f"--config {config}") for line in lines):
+            fail(where, f"does not start the bridge on {config}")
+    shared = [[line for line in unit_lines(text) if not line.startswith(UNIT_VARIANT_KEYS)]
+              for text in (main, sim)]
+    if shared[0] != shared[1]:
+        fail("fm-zenoh-bridge-sim.service", "differs from fm-zenoh-bridge.service beyond its "
+             f"distro, config, and description: {sorted(set(shared[0]) ^ set(shared[1]))}")
+
+
+UNIT_MUTATIONS = (
+    ("a sim unit left on humble",
+     lambda units: units.__setitem__(1, units[1].replace("ROS_DISTRO=jazzy", "ROS_DISTRO=humble")),
+     "does not run with ROS_DISTRO=jazzy"),
+    ("a sim unit on the main config",
+     lambda units: units.__setitem__(1, units[1].replace("bridge-sim.json5", "bridge.json5")),
+     "does not start the bridge on /etc/fm-comms/bridge-sim.json5"),
+    ("a sim unit off loopback",
+     lambda units: units.__setitem__(1, units[1].replace("Environment=ROS_LOCALHOST_ONLY=1\n", "")),
+     "beyond its distro"),
+)
 
 
 def main() -> int:
@@ -417,14 +687,54 @@ def main() -> int:
             except ValueError as exc:
                 fail("router.json5", f"rendered output is not valid JSON5: {exc}")
 
+        bridges: dict[str, dict] = {}
         for profile in BRIDGE_PROFILES:
+            if profile not in CARDS:
+                fail(f"bridge-{profile}.json5", "has no fixture card in CARDS, so it is never rendered")
+                continue
             rendered = render("bridge", profile, CARDS[profile], workdir)
             if rendered is None:
                 continue
             try:
-                check_bridge(profile, json5.loads(rendered))
+                config = json5.loads(rendered)
             except ValueError as exc:
                 fail(f"bridge-{profile}.json5", f"rendered output is not valid JSON5: {exc}")
+                continue
+            check_bridge(profile, config)
+            bridges[profile] = config
+            if profile == "sim":
+                check_mutations("sim", config, SIM_MUTATIONS, lambda c: check_bridge("sim", c))
+            # A host's one bridge keeps the plain node name, which the sim pair
+            # below extends. The cockpit has no namespace to derive it from.
+            ros2dds = _ros2dds(config)
+            if profile != "cockpit" and ros2dds.get("nodename") != f"zenoh_bridge_{ros2dds.get('namespace', '').lstrip('/')}":
+                fail(f"bridge-{profile}.json5", f"nodename {ros2dds.get('nodename')!r} is not zenoh_bridge_<namespace>")
+
+        # A workstation that hosts sim runs keeps its own Humble bridge and adds
+        # a Jazzy one beside it (`./install.sh --role bridge-sim`), rendered from
+        # the workstation's own card. It is held to the full sim contract, then
+        # to the pair: same namespace, its own node name, and a unit that matches
+        # the workstation's in everything but distro, config, and description.
+        card = CARDS["workstation"]
+        rendered = render("bridge-sim", "workstation", card, workdir)
+        sim_second = None
+        if rendered is not None:
+            try:
+                sim_second = json5.loads(rendered)
+            except ValueError as exc:
+                fail("bridge-sim.json5 (workstation)", f"rendered output is not valid JSON5: {exc}")
+        if sim_second is not None and "workstation" in bridges:
+            check_bridge("sim", sim_second, where="bridge-sim.json5 (workstation)")
+            pair = (bridges["workstation"], sim_second)
+            check_sim_pair(*pair)
+            check_mutations("sim pair", pair, PAIR_MUTATIONS, lambda p: check_sim_pair(*p))
+        else:
+            fail("bridge-sim.json5 (workstation)", "did not render beside the workstation's own bridge")
+
+        units = [render(kind, "workstation", card, workdir) for kind in ("bridge-unit", "bridge-sim-unit")]
+        if None not in units:
+            check_units(*units)
+            check_mutations("units", units, UNIT_MUTATIONS, lambda u: check_units(*u))
 
         # Both plists are rendered too: they are generated the same way, from the
         # same inputs, and a malformed one is a service that never starts.
