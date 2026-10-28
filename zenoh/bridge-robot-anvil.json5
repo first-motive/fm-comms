@@ -70,6 +70,10 @@
           /// table, which the desktop draws beside the robot as its twin.
           /// Detections only: a few hundred bytes each, read-only.
           "^/perception/chest/.*$",
+          /// The motion fm-skills planned with MoveIt, every segment, published
+          /// once per move before the arm starts, which the desktop draws
+          /// against the path the arm then takes. Read-only, like the rest.
+          "^/display_planned_path$",
         ],
       },
 

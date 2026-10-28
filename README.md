@@ -130,7 +130,7 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
-robot-anvil  an Anvil workcell: state and cameras out, nothing in
+robot-anvil  an Anvil workcell: state, cameras, and planned path out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state and 10 Hz cameras out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
@@ -195,11 +195,13 @@ else:
 /sim/objects  /sim/markers  /sim/outcome
 /task/events
 /perception/chest/can  /perception/chest/paper  /perception/wrist/can
+/display_planned_path
 /cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
 ```
 
-The `/task` and `/perception` names are the ones fm-skills publishes today, so a
-new one is added here and in the profile together. `check-transport.py` holds
+The `/task`, `/perception`, and `/display_planned_path` names are the ones
+fm-skills publishes today, so a new one is added here and in the profile
+together. `check-transport.py` holds
 the profile to this list in both directions. Every name must pass, and every
 rule must be either one name above written literally (`^/sim/objects$`, no
 regex metacharacters; a concrete camera name counts) or one of the two camera

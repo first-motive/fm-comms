@@ -292,6 +292,7 @@ SIM_CONTRACT = {
         "/perception/chest/can",
         "/perception/chest/paper",
         "/perception/wrist/can",
+        "/display_planned_path",
         "/cam_chest/image_raw/compressed",
         "/cam_chest/camera_info",
         "/cam_wrist_right/image_raw/compressed",
@@ -350,6 +351,7 @@ REQUIRED_TOPICS = {
         ("publishers", "/controls_owner"),
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
+        ("publishers", "/display_planned_path"),
     ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [
@@ -546,6 +548,9 @@ SIM_MUTATIONS = (
     ("a widened camera pattern",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_.*/image_raw/compressed$"),
      "neither a literal contract topic"),
+    ("a deleted planned path",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/display_planned_path$"),
+     "carries no publisher rule for '/display_planned_path'"),
 )
 
 
