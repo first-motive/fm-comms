@@ -111,6 +111,14 @@
           /// once per move before the arm starts. The viewer draws it against
           /// the path the arm then takes.
           "^/display_planned_path$",
+          /// The running controller's pipeline, latched, which the desktop draws
+          /// as its Control pane, and the plain topics that pipeline watches for
+          /// anvil's classical controller: the can it located and its phase.
+          /// Action feedback is not here: the plugin routes it only with the
+          /// action's goal service, which no profile exposes.
+          "^/control/descriptor$",
+          "^/classical/can_pose$",
+          "^/classical/phase$",
           /// Chest and wrist cameras, compressed only. A raw frame is 20-50x
           /// the bytes and nothing on the fabric reads one.
           "^/cam_[a-z0-9_]+/image_raw/compressed$",

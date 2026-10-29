@@ -130,7 +130,7 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
-robot-anvil  an Anvil workcell: state, cameras, planned path, and task events out, nothing in
+robot-anvil  an Anvil workcell: state, cameras, planned path, task events, and control descriptor out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state and 10 Hz cameras out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
@@ -196,12 +196,15 @@ else:
 /task/events
 /perception/chest/can  /perception/chest/paper  /perception/wrist/can
 /display_planned_path
+/control/descriptor  /classical/can_pose  /classical/phase
 /cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
 ```
 
 The `/task`, `/perception`, and `/display_planned_path` names are the ones
-fm-skills publishes today, so a new one is added here and in the profile
-together. `check-transport.py` holds
+fm-skills publishes today. The `/classical` names are the ones anvil's classical
+controller publishes for the desktop, and `/control/descriptor` is the running
+controller's pipeline, latched. A new name on this list is added here and in the
+profile together. `check-transport.py` holds
 the profile to this list in both directions. Every name must pass, and every
 rule must be either one name above written literally (`^/sim/objects$`, no
 regex metacharacters; a concrete camera name counts) or one of the two camera
