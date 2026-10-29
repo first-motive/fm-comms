@@ -74,6 +74,9 @@
           /// once per move before the arm starts, which the desktop draws
           /// against the path the arm then takes. Read-only, like the rest.
           "^/display_planned_path$",
+          /// fm-skills' task, mode, and skill events, which the desktop draws as
+          /// the task's state machine. Read-only, a few per move.
+          "^/task/events$",
         ],
       },
 

@@ -241,6 +241,9 @@ FORBIDDEN_TOPICS = {
         # Compressed only. A raw frame is 20-50x the bytes of the compressed one
         # beside it, and the compressed rule must not widen into it.
         ("publishers", "/cam_wrist_l/image_raw"),
+        # Task events only: the task's command topics beside them stay on the rig.
+        ("publishers", "/task/cmd"),
+        ("publishers", "/task/pick_place"),
     ],
     "processor": [],
     "workstation": [
@@ -352,6 +355,7 @@ REQUIRED_TOPICS = {
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
         ("publishers", "/display_planned_path"),
+        ("publishers", "/task/events"),
     ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [
