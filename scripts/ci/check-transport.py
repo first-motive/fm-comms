@@ -244,6 +244,10 @@ FORBIDDEN_TOPICS = {
         # Task events only: the task's command topics beside them stay on the rig.
         ("publishers", "/task/cmd"),
         ("publishers", "/task/pick_place"),
+        # The classical controller's phase and can pose only: its pick_place
+        # action, goal service and feedback alike, stays on the rig.
+        ("publishers", "/classical/pick_place/_action/send_goal"),
+        ("publishers", "/classical/pick_place/_action/feedback"),
     ],
     "processor": [],
     "workstation": [
@@ -278,7 +282,8 @@ FORBIDDEN_TOPICS = {
 
 # The sim host's topic list, the one README.md states for the `sim` profile:
 # state out, and nothing else. `/task/*` and `/perception/*` are held to the
-# topics fm-skills publishes today. Graded both ways: every name here must pass,
+# topics fm-skills publishes today, `/classical/*` to the ones anvil's classical
+# controller publishes, and `/control/descriptor` is the running controller's. Graded both ways: every name here must pass,
 # every rule must admit a name here, and no rule of any kind may admit a name in
 # SIM_OUTSIDE_CONTRACT.
 SIM_CONTRACT = {
@@ -296,6 +301,9 @@ SIM_CONTRACT = {
         "/perception/chest/paper",
         "/perception/wrist/can",
         "/display_planned_path",
+        "/control/descriptor",
+        "/classical/can_pose",
+        "/classical/phase",
         "/cam_chest/image_raw/compressed",
         "/cam_chest/camera_info",
         "/cam_wrist_right/image_raw/compressed",
@@ -325,6 +333,8 @@ SIM_OUTSIDE_CONTRACT = [
     "/cam_chest/image_raw",
     "/cam_wrist_right/image_raw",
     "/commanded_ee_right",
+    "/classical/pick_place/_action/send_goal",
+    "/classical/pick_place/_action/feedback",
     "/arm_controller/joint_trajectory",
     "/controller_manager/switch_controller",
     "/robot_description",
@@ -356,6 +366,9 @@ REQUIRED_TOPICS = {
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
         ("publishers", "/display_planned_path"),
         ("publishers", "/task/events"),
+        ("publishers", "/control/descriptor"),
+        ("publishers", "/classical/can_pose"),
+        ("publishers", "/classical/phase"),
     ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [

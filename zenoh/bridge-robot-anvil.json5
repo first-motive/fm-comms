@@ -77,6 +77,12 @@
           /// fm-skills' task, mode, and skill events, which the desktop draws as
           /// the task's state machine. Read-only, a few per move.
           "^/task/events$",
+          /// The running controller's pipeline, latched, which the desktop draws
+          /// as its Control pane, and anvil's classical controller's located can
+          /// and phase. Read-only, a few per move.
+          "^/control/descriptor$",
+          "^/classical/can_pose$",
+          "^/classical/phase$",
         ],
       },
 
