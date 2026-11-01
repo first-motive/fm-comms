@@ -130,7 +130,7 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
-robot-anvil  an Anvil workcell: state, cameras, planned path, task events, and control descriptor out, nothing in
+robot-anvil  an Anvil workcell: state, frames, cameras, planned path, task events, and control descriptor out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state and 10 Hz cameras out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)

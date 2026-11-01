@@ -54,6 +54,10 @@
         publishers: [
           /// Where the arms are — the stream the desktop renders.
           "^/joint_states$",
+          /// The frame tree, which the desktop's Transforms panel draws. Only on
+          /// the wire while that panel is open.
+          "^/tf$",
+          "^/tf_static$",
           /// Whether the hardware is active, paused, or faulted, which is what
           /// `stop` is confirmed against.
           "^/hardware_state_controller/state$",
@@ -91,6 +95,7 @@
       /// its native rate is the largest thing this host could put on the wire.
       pub_max_frequencies: [
         "/joint_states=50",
+        "/tf=50",
         "/ee_pose_.*=30",
         "/cam_.*/compressed=10",
         "/perception/chest/.*=10",
