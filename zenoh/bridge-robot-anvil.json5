@@ -72,7 +72,10 @@
           "^/cam_.*/compressed$",
           /// Where fm-skills' perception places the can and the paper on the
           /// table, which the desktop draws beside the robot as its twin.
-          /// Detections only: a few hundred bytes each, read-only.
+          /// Detections only: a few hundred bytes each, read-only. The bare
+          /// topic carries every class at once and is the one the desktop's
+          /// Robots page reads; the per-class topics sit under it.
+          "^/perception/chest$",
           "^/perception/chest/.*$",
           /// Wrist detections, moments in the image only, which the desktop
           /// draws over the wrist camera. Open over the class like the chest
@@ -108,6 +111,7 @@
         "/tf=50",
         "/ee_pose_.*=30",
         "/cam_.*/compressed=10",
+        "/perception/chest=10",
         "/perception/chest/.*=10",
         "/perception/wrist/.*=10",
         "/perception/debug/(chest|wrist)=5",
