@@ -25,8 +25,9 @@ Three passes, in order of how early they catch a mistake:
    carries exactly the simulation contract's topic list with its cameras capped,
    a workstation's second (Jazzy) sim bridge holds that same contract in the
    workstation's namespace under a node name of its own, its unit differs from
-   the workstation's only in distro, config, and description, and the cockpit
-   Mac publishes teleop and nothing else.
+   the workstation's only in distro, config, and description, the cockpit
+   Mac publishes teleop and nothing else, and no profile that publishes
+   perception's all-class chest topic caps it.
 
 Run it the same way CI does::
 
@@ -366,6 +367,11 @@ SIM_CAMERA_MAX_HZ = 10.0
 DEBUG_FRAME_TOPICS = ["/perception/debug/chest", "/perception/debug/wrist"]
 DEBUG_FRAME_MAX_HZ = 5.0
 
+# Perception's all-class topic: every class's detection at the camera's rate,
+# so a fixed cap drops whole classes once a pack has more than one. Its samples
+# are a few hundred bytes, and no profile that publishes it may cap it.
+ALL_CLASS_TOPICS = ["/perception/chest"]
+
 
 # Topic names a bridge MUST carry, and the profile each belongs to. The mirror
 # of FORBIDDEN_TOPICS, and the check the workstation profile exists because of: a
@@ -545,6 +551,12 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
             if cap is None or cap > DEBUG_FRAME_MAX_HZ:
                 fail(where, f"debug frame topic {topic!r} is capped at {cap} Hz, not at most {DEBUG_FRAME_MAX_HZ}")
 
+    for topic in ALL_CLASS_TOPICS:
+        if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
+            cap = max_frequency(caps, topic)
+            if cap is not None:
+                fail(where, f"all-class topic {topic!r} is capped at {cap} Hz, not uncapped")
+
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):
             if matches(pattern, topic):
@@ -613,8 +625,8 @@ SIM_MUTATIONS = (
 )
 
 
-# Ways the anvil profile could reopen an inbound path, each applied to the real
-# rendered config. The debug lease is the service most likely to be added "just
+# Ways the anvil profile could drift from its contract, each applied to the
+# real rendered config. The debug lease is the service most likely to be added "just
 # for the desktop", and it belongs to fm-robot-agent on the rig.
 ANVIL_MUTATIONS = (
     ("a subscriber rule",
@@ -626,6 +638,9 @@ ANVIL_MUTATIONS = (
     ("a service client rule",
      lambda c: _ros2dds(c)["allow"].update(service_clients=["^/perception/set_debug$"]),
      "accepts no inbound"),
+    ("a cap on the all-class chest topic",
+     lambda c: _ros2dds(c)["pub_max_frequencies"].append("/perception/chest=10"),
+     "not uncapped"),
 )
 
 

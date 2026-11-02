@@ -111,7 +111,10 @@
         "/tf=50",
         "/ee_pose_.*=30",
         "/cam_.*/compressed=10",
-        "/perception/chest=10",
+        /// No cap on the bare `/perception/chest`: it carries every class, each
+        /// at the camera's rate, so a fixed cap drops whole classes once a pack
+        /// has two. Its samples are a few hundred bytes. The per-class topics
+        /// hold their own cap.
         "/perception/chest/.*=10",
         "/perception/wrist/.*=10",
         "/perception/debug/(chest|wrist)=5",
