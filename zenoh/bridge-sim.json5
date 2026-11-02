@@ -102,11 +102,24 @@
           "^/sim/markers$",
           "^/sim/outcome$",
           /// fm-skills' task events and perception detections, by name for the
-          /// same reason: the topics fm-skills publishes today and no others.
+          /// same reason: one topic per class of the tabletop pack (can, block,
+          /// puck, paper) on each camera, so a new pack class is an edit here.
           "^/task/events$",
+          "^/perception/chest$",
           "^/perception/chest/can$",
+          "^/perception/chest/block$",
+          "^/perception/chest/puck$",
           "^/perception/chest/paper$",
           "^/perception/wrist/can$",
+          "^/perception/wrist/block$",
+          "^/perception/wrist/puck$",
+          "^/perception/wrist/paper$",
+          /// Perception's debug frames: the source JPEG plus every candidate,
+          /// published only while the agent's `perception_debug` lease holds
+          /// debug on. The lease's `/perception/set_debug` service is not here:
+          /// the agent calls it locally, like `/sim/reset`.
+          "^/perception/debug/chest$",
+          "^/perception/debug/wrist$",
           /// The motion fm-skills planned with MoveIt, every segment, published
           /// once per move before the arm starts. The viewer draws it against
           /// the path the arm then takes.
@@ -128,10 +141,13 @@
 
       /// A camera at its render rate is the largest thing this host could put
       /// on the wire, and the viewer draws well below it. Its intrinsics are
-      /// capped with it: they never change, yet arrive once per frame.
+      /// capped with it: they never change, yet arrive once per frame. A debug
+      /// frame carries a camera JPEG too, and is held to the node's own
+      /// default rate.
       pub_max_frequencies: [
         "/cam_[a-z0-9_]+/image_raw/compressed=10",
         "/cam_[a-z0-9_]+/camera_info=10",
+        "/perception/debug/(chest|wrist)=5",
       ],
 
       reliable_routes_blocking: false,

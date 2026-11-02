@@ -74,6 +74,16 @@
           /// table, which the desktop draws beside the robot as its twin.
           /// Detections only: a few hundred bytes each, read-only.
           "^/perception/chest/.*$",
+          /// Wrist detections, moments in the image only, which the desktop
+          /// draws over the wrist camera. Open over the class like the chest
+          /// rule: the node publishes one topic per class of whichever pack the
+          /// rig mounts, and anvil packs differ. Detections only, read-only.
+          "^/perception/wrist/.*$",
+          /// Perception's debug frames: the source JPEG plus every candidate,
+          /// published only while fm-robot-agent's `perception_debug` lease
+          /// holds debug on. The lease's `/perception/set_debug` service stays
+          /// on the rig: the agent calls it locally.
+          "^/perception/debug/(chest|wrist)$",
           /// The motion fm-skills planned with MoveIt, every segment, published
           /// once per move before the arm starts, which the desktop draws
           /// against the path the arm then takes. Read-only, like the rest.
@@ -99,6 +109,8 @@
         "/ee_pose_.*=30",
         "/cam_.*/compressed=10",
         "/perception/chest/.*=10",
+        "/perception/wrist/.*=10",
+        "/perception/debug/(chest|wrist)=5",
       ],
 
       reliable_routes_blocking: false,

@@ -130,7 +130,7 @@ set:
 recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
-robot-anvil  an Anvil workcell: state, frames, cameras, planned path, task events, and control descriptor out, nothing in
+robot-anvil  an Anvil workcell: state, frames, cameras, perception, planned path, task events, and control descriptor out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state and 10 Hz cameras out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
@@ -194,7 +194,10 @@ else:
 /joint_states  /tf  /tf_static  /clock  /rosout
 /sim/objects  /sim/markers  /sim/outcome
 /task/events
-/perception/chest/can  /perception/chest/paper  /perception/wrist/can
+/perception/chest
+/perception/chest/can  /perception/chest/block  /perception/chest/puck  /perception/chest/paper
+/perception/wrist/can  /perception/wrist/block  /perception/wrist/puck  /perception/wrist/paper
+/perception/debug/chest  /perception/debug/wrist                    capped at 5 Hz
 /display_planned_path
 /control/descriptor  /classical/can_pose  /classical/phase
 /cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
@@ -211,8 +214,8 @@ regex metacharacters; a concrete camera name counts) or one of the two camera
 patterns
 `^/cam_[a-z0-9_]+/image_raw/compressed$` and `^/cam_[a-z0-9_]+/camera_info$`,
 string for string. Any other rule fails the pull request, as does a rule that
-admits a known neighbour (`/sim/reset`, `/task/pick_place`, a raw `image_raw`
-frame, `/commanded_ee_right`).
+admits a known neighbour (`/sim/reset`, `/perception/set_debug`,
+`/task/pick_place`, a raw `image_raw` frame, `/commanded_ee_right`).
 
 `cockpit` is the mirror of the others, and reads backwards on purpose. A rig
 publishes what it produces and accepts a few commands; the Mac subscribes to what
