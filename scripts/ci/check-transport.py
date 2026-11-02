@@ -94,6 +94,7 @@ BRIDGE_PROFILES = tuple(sorted(
 # agent's queryables on the host, so a subscriber rule there is an unreviewed
 # command path into the controllers.
 NO_INBOUND_PROFILES = ("robot-anvil", "sim")
+NO_INBOUND_KINDS = ("subscribers", "service_servers", "service_clients")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
 FM_ROUTER_ENDPOINT=tcp/fixture-router:7447
@@ -248,6 +249,9 @@ FORBIDDEN_TOPICS = {
         # action, goal service and feedback alike, stays on the rig.
         ("publishers", "/classical/pick_place/_action/send_goal"),
         ("publishers", "/classical/pick_place/_action/feedback"),
+        # Perception's debug lease is renewed by fm-robot-agent on the rig. A
+        # remote caller could hold debug on and keep JPEG frames streaming.
+        ("service_servers", "/perception/set_debug"),
     ],
     "processor": [],
     "workstation": [
@@ -297,9 +301,17 @@ SIM_CONTRACT = {
         "/sim/markers",
         "/sim/outcome",
         "/task/events",
+        "/perception/chest",
         "/perception/chest/can",
+        "/perception/chest/block",
+        "/perception/chest/puck",
         "/perception/chest/paper",
         "/perception/wrist/can",
+        "/perception/wrist/block",
+        "/perception/wrist/puck",
+        "/perception/wrist/paper",
+        "/perception/debug/chest",
+        "/perception/debug/wrist",
         "/display_planned_path",
         "/control/descriptor",
         "/classical/can_pose",
@@ -321,15 +333,17 @@ SIM_CAMERA_RULES = (
 # The sim profile's forbidden names, graded against every rule kind rather than
 # through FORBIDDEN_TOPICS above. Each sits beside the contract where a rule
 # written a little too wide would admit it: a sibling under /sim, /task or
-# /perception, the raw frame beside a compressed one, the reset service the
-# agent alone may call, and the commands that move the simulated arm.
+# /perception (`arm` is no pack class), the raw frame beside a compressed one,
+# the reset and debug-lease services the agent alone may call, and the
+# commands that move the simulated arm.
 SIM_OUTSIDE_CONTRACT = [
     "/sim/debug",
     "/sim/reset",
     "/task/cmd",
     "/task/pick_place",
     "/perception/wrist/arm",
-    "/perception/wrist/paper",
+    "/perception/debug/arm",
+    "/perception/set_debug",
     "/cam_chest/image_raw",
     "/cam_wrist_right/image_raw",
     "/commanded_ee_right",
@@ -344,6 +358,13 @@ SIM_OUTSIDE_CONTRACT = [
 # camera at its render rate is the largest stream the host produces.
 SIM_CAMERA_TOPICS = [t for t in SIM_CONTRACT["publishers"] if t.startswith("/cam_")]
 SIM_CAMERA_MAX_HZ = 10.0
+
+# Perception's debug frames, and the rate they may cross at on any profile that
+# carries them: each holds a camera JPEG and every candidate's mask, so they
+# are held to the rate the node throttles them to by default, fm-skills'
+# fm_skills_perception parameter `debug_rate_hz` (5.0).
+DEBUG_FRAME_TOPICS = ["/perception/debug/chest", "/perception/debug/wrist"]
+DEBUG_FRAME_MAX_HZ = 5.0
 
 
 # Topic names a bridge MUST carry, and the profile each belongs to. The mirror
@@ -364,6 +385,9 @@ REQUIRED_TOPICS = {
         ("publishers", "/controls_owner"),
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
+        ("publishers", "/perception/wrist/can"),
+        ("publishers", "/perception/debug/chest"),
+        ("publishers", "/perception/debug/wrist"),
         ("publishers", "/display_planned_path"),
         ("publishers", "/task/events"),
         ("publishers", "/control/descriptor"),
@@ -424,7 +448,7 @@ def max_frequency(caps: list[tuple[str, float]], topic: str) -> float | None:
     return min(hits) if hits else None
 
 
-def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
+def check_sim_contract(where: str, caps: list[tuple[str, float]], allow: dict) -> None:
     """Grade the sim profile against the contract list in both directions."""
     extra_kinds = set(allow) - set(SIM_CONTRACT)
     if extra_kinds:
@@ -442,7 +466,6 @@ def check_sim_contract(where: str, ros2dds: dict, allow: dict) -> None:
             for topic in SIM_OUTSIDE_CONTRACT:
                 if matches(pattern, topic):
                     fail(where, f"{kind[:-1]} rule {pattern!r} admits {topic!r}, which is outside the contract")
-    caps = frequency_caps(where, ros2dds)
     for topic in SIM_CAMERA_TOPICS:
         cap = max_frequency(caps, topic)
         if cap is None:
@@ -500,15 +523,26 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
             fail(where, f"carries no {kind[:-1]} rule for {topic!r}")
 
     # The absence rule, graded as an absence. Every other check here reads the
-    # rules a profile carries; this one reads the list an anvil host must not
+    # rules a profile carries; this one reads the lists an anvil host must not
     # have at all. Its whole safety property is that no key on the fabric reaches
-    # a DDS writer on the workcell, and one added rule would restore an inbound
-    # path that no forbidden-topic test would notice.
-    if profile in NO_INBOUND_PROFILES and allow.get("subscribers"):
-        fail(where, f"carries subscriber rules — a {profile} host accepts no inbound topic")
+    # a DDS writer or service on the workcell, and one added rule would restore
+    # an inbound path that no forbidden-topic test would notice. A service is
+    # inbound either way: a server rule lets the fabric call one here, and a
+    # client rule routes this host's calls to a server elsewhere.
+    if profile in NO_INBOUND_PROFILES:
+        for kind in NO_INBOUND_KINDS:
+            if allow.get(kind):
+                fail(where, f"carries {kind[:-1]} rules — a {profile} host accepts no inbound topic or service")
 
+    caps = frequency_caps(where, ros2dds)
     if profile == "sim":
-        check_sim_contract(where, ros2dds, allow)
+        check_sim_contract(where, caps, allow)
+
+    for topic in DEBUG_FRAME_TOPICS:
+        if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
+            cap = max_frequency(caps, topic)
+            if cap is None or cap > DEBUG_FRAME_MAX_HZ:
+                fail(where, f"debug frame topic {topic!r} is capped at {cap} Hz, not at most {DEBUG_FRAME_MAX_HZ}")
 
     for kind, topic in FORBIDDEN_TOPICS.get(profile, []):
         for pattern in allow.get(kind, []):
@@ -565,9 +599,32 @@ SIM_MUTATIONS = (
     ("a widened camera pattern",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_.*/image_raw/compressed$"),
      "neither a literal contract topic"),
+    ("an uncapped debug frame",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "debug" not in rule]),
+     "not at most 5.0"),
+    ("a debug lease service rule",
+     lambda c: _ros2dds(c)["allow"].update(service_servers=["^/perception/set_debug$"]),
+     "rule kinds outside the contract"),
     ("a deleted planned path",
      lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/display_planned_path$"),
      "carries no publisher rule for '/display_planned_path'"),
+)
+
+
+# Ways the anvil profile could reopen an inbound path, each applied to the real
+# rendered config. The debug lease is the service most likely to be added "just
+# for the desktop", and it belongs to fm-robot-agent on the rig.
+ANVIL_MUTATIONS = (
+    ("a subscriber rule",
+     lambda c: _ros2dds(c)["allow"].update(subscribers=["^/commanded_ee_left$"]),
+     "accepts no inbound"),
+    ("a debug lease service server rule",
+     lambda c: _ros2dds(c)["allow"].update(service_servers=["^/perception/set_debug$"]),
+     "accepts no inbound"),
+    ("a service client rule",
+     lambda c: _ros2dds(c)["allow"].update(service_clients=["^/perception/set_debug$"]),
+     "accepts no inbound"),
 )
 
 
@@ -726,6 +783,8 @@ def main() -> int:
             bridges[profile] = config
             if profile == "sim":
                 check_mutations("sim", config, SIM_MUTATIONS, lambda c: check_bridge("sim", c))
+            if profile == "robot-anvil":
+                check_mutations("robot-anvil", config, ANVIL_MUTATIONS, lambda c: check_bridge("robot-anvil", c))
             # A host's one bridge keeps the plain node name, which the sim pair
             # below extends. The cockpit has no namespace to derive it from.
             ros2dds = _ros2dds(config)
