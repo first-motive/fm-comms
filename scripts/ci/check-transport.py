@@ -385,6 +385,7 @@ REQUIRED_TOPICS = {
         ("publishers", "/controls_owner"),
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
+        ("publishers", "/perception/chest"),
         ("publishers", "/perception/wrist/can"),
         ("publishers", "/perception/debug/chest"),
         ("publishers", "/perception/debug/wrist"),
