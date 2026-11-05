@@ -100,6 +100,11 @@
           "^/control/descriptor$",
           "^/classical/can_pose$",
           "^/classical/phase$",
+          /// Contact at the gripper, both sides of it: what fm-skills' contact
+          /// model predicts from the wrist camera, and what fm-tactile's pads
+          /// measure. One boolean and a score or pad sum each, read-only.
+          "^/tactile/predicted/contact$",
+          "^/tactile/measured/contact$",
         ],
       },
 
@@ -118,6 +123,7 @@
         "/perception/chest/.*=10",
         "/perception/wrist/.*=10",
         "/perception/debug/(chest|wrist)=5",
+        "/tactile/(predicted|measured)/contact=10",
       ],
 
       reliable_routes_blocking: false,
