@@ -145,6 +145,9 @@
           /// Each camera's fisheye depth, a 16-bit PNG in millimetres stamped
           /// with its colour frame. fm-twin reads it as ground truth.
           "^/cam_[a-z0-9_]+/depth/compressed$",
+          /// A camera's simulated depth sensor, noisy like a RealSense, when a
+          /// run turns it on. fm-twin's rgbd mode reads it.
+          "^/cam_[a-z0-9_]+/depth_sensor/compressed$",
         ],
       },
 
@@ -157,6 +160,7 @@
         "/cam_[a-z0-9_]+/image_raw/compressed=10",
         "/cam_[a-z0-9_]+/camera_info=10",
         "/cam_[a-z0-9_]+/depth/compressed=10",
+        "/cam_[a-z0-9_]+/depth_sensor/compressed=10",
         "/perception/debug/(chest|wrist)=5",
         "/tactile/(predicted|measured)/contact=10",
       ],
