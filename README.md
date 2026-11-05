@@ -202,6 +202,7 @@ else:
 /control/descriptor  /classical/can_pose  /classical/phase
 /tactile/predicted/contact  /tactile/measured/contact               capped at 10 Hz
 /cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
+/cam_<role>/depth/compressed                                 capped at 10 Hz
 ```
 
 The `/task`, `/perception`, and `/display_planned_path` names are the ones
@@ -214,12 +215,12 @@ profiles carry one contact contract. A new name on this list is added here and
 in the profile together. `check-transport.py` holds
 the profile to this list in both directions. Every name must pass, and every
 rule must be either one name above written literally (`^/sim/objects$`, no
-regex metacharacters; a concrete camera name counts) or one of the two camera
+regex metacharacters; a concrete camera name counts) or one of the three camera
 patterns
-`^/cam_[a-z0-9_]+/image_raw/compressed$` and `^/cam_[a-z0-9_]+/camera_info$`,
-string for string. Any other rule fails the pull request, as does a rule that
+`^/cam_[a-z0-9_]+/image_raw/compressed$`, `^/cam_[a-z0-9_]+/camera_info$` and
+`^/cam_[a-z0-9_]+/depth/compressed$`, string for string. Any other rule fails the pull request, as does a rule that
 admits a known neighbour (`/sim/reset`, `/perception/set_debug`,
-`/task/pick_place`, a raw `image_raw` frame, `/commanded_ee_right`).
+`/task/pick_place`, a raw `image_raw` frame, an uncompressed depth image, `/commanded_ee_right`).
 
 `cockpit` is the mirror of the others, and reads backwards on purpose. A rig
 publishes what it produces and accepts a few commands; the Mac subscribes to what
