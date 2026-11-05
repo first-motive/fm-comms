@@ -326,15 +326,18 @@ SIM_CONTRACT = {
         "/cam_wrist_right/camera_info",
         "/cam_chest/depth/compressed",
         "/cam_wrist_right/depth/compressed",
+        "/cam_chest/depth_sensor/compressed",
+        "/cam_wrist_right/depth_sensor/compressed",
     ],
 }
 
-# The only three non-literal rules the sim profile may carry, compared string for
+# The only four non-literal rules the sim profile may carry, compared string for
 # string. The role is the one free part of a camera topic's name.
 SIM_CAMERA_RULES = (
     "^/cam_[a-z0-9_]+/image_raw/compressed$",
     "^/cam_[a-z0-9_]+/camera_info$",
     "^/cam_[a-z0-9_]+/depth/compressed$",
+    "^/cam_[a-z0-9_]+/depth_sensor/compressed$",
 )
 
 # The sim profile's forbidden names, graded against every rule kind rather than
@@ -356,6 +359,7 @@ SIM_OUTSIDE_CONTRACT = [
     "/cam_wrist_right/image_raw",
     "/cam_chest/depth",
     "/cam_wrist_right/depth",
+    "/cam_chest/depth_sensor",
     "/mujoco_cameras/chest/depth",
     "/commanded_ee_right",
     "/classical/pick_place/_action/send_goal",
@@ -479,7 +483,7 @@ def check_sim_contract(where: str, caps: list[tuple[str, float]], allow: dict) -
     if extra_kinds:
         fail(where, f"carries rule kinds outside the contract: {sorted(extra_kinds)}")
     # Exact, not sampled: a rule is either one contract topic spelled literally,
-    # or one of the three fixed camera patterns, string for string. A wildcard
+    # or one of the four fixed camera patterns, string for string. A wildcard
     # that happens to dodge every probe below still fails here.
     for pattern in allow.get("publishers", []):
         body = pattern[1:-1] if pattern.startswith("^") and pattern.endswith("$") else None
@@ -638,6 +642,9 @@ SIM_MUTATIONS = (
      "neither a literal contract topic"),
     ("a widened depth pattern",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_.*/depth/compressed$"),
+     "neither a literal contract topic"),
+    ("a widened depth sensor pattern",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_.*/depth_sensor/compressed$"),
      "neither a literal contract topic"),
     ("an uncapped debug frame",
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
