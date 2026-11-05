@@ -142,6 +142,9 @@
           /// the bytes and nothing on the fabric reads one.
           "^/cam_[a-z0-9_]+/image_raw/compressed$",
           "^/cam_[a-z0-9_]+/camera_info$",
+          /// Each camera's fisheye depth, a 16-bit PNG in millimetres stamped
+          /// with its colour frame. fm-twin reads it as ground truth.
+          "^/cam_[a-z0-9_]+/depth/compressed$",
         ],
       },
 
@@ -153,6 +156,7 @@
       pub_max_frequencies: [
         "/cam_[a-z0-9_]+/image_raw/compressed=10",
         "/cam_[a-z0-9_]+/camera_info=10",
+        "/cam_[a-z0-9_]+/depth/compressed=10",
         "/perception/debug/(chest|wrist)=5",
         "/tactile/(predicted|measured)/contact=10",
       ],
