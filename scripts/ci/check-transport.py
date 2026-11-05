@@ -288,9 +288,10 @@ FORBIDDEN_TOPICS = {
 # The sim host's topic list, the one README.md states for the `sim` profile:
 # state out, and nothing else. `/task/*` and `/perception/*` are held to the
 # topics fm-skills publishes today, `/classical/*` to the ones anvil's classical
-# controller publishes, and `/control/descriptor` is the running controller's. Graded both ways: every name here must pass,
-# every rule must admit a name here, and no rule of any kind may admit a name in
-# SIM_OUTSIDE_CONTRACT.
+# controller publishes, `/control/descriptor` is the running controller's, and
+# `/tactile/*` is held to the two contact topics. Graded both ways: every name
+# here must pass, every rule must admit a name here, and no rule of any kind may
+# admit a name in SIM_OUTSIDE_CONTRACT.
 SIM_CONTRACT = {
     "publishers": [
         "/joint_states",
@@ -317,6 +318,8 @@ SIM_CONTRACT = {
         "/control/descriptor",
         "/classical/can_pose",
         "/classical/phase",
+        "/tactile/predicted/contact",
+        "/tactile/measured/contact",
         "/cam_chest/image_raw/compressed",
         "/cam_chest/camera_info",
         "/cam_wrist_right/image_raw/compressed",
@@ -367,6 +370,12 @@ SIM_CAMERA_MAX_HZ = 10.0
 DEBUG_FRAME_TOPICS = ["/perception/debug/chest", "/perception/debug/wrist"]
 DEBUG_FRAME_MAX_HZ = 5.0
 
+# Contact at the gripper, predicted and measured, and the rate it may cross at
+# on any profile that carries it. The predictor runs at 5 Hz; the cap leaves it
+# headroom and holds a misbehaving local writer to a known rate.
+CONTACT_TOPICS = ["/tactile/predicted/contact", "/tactile/measured/contact"]
+CONTACT_MAX_HZ = 10.0
+
 # Perception's all-class topic: every class's detection at the camera's rate,
 # so a fixed cap drops whole classes once a pack has more than one. Its samples
 # are a few hundred bytes, and no profile that publishes it may cap it.
@@ -400,6 +409,8 @@ REQUIRED_TOPICS = {
         ("publishers", "/control/descriptor"),
         ("publishers", "/classical/can_pose"),
         ("publishers", "/classical/phase"),
+        ("publishers", "/tactile/predicted/contact"),
+        ("publishers", "/tactile/measured/contact"),
     ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [
@@ -550,6 +561,12 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
             cap = max_frequency(caps, topic)
             if cap is None or cap > DEBUG_FRAME_MAX_HZ:
                 fail(where, f"debug frame topic {topic!r} is capped at {cap} Hz, not at most {DEBUG_FRAME_MAX_HZ}")
+
+    for topic in CONTACT_TOPICS:
+        if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
+            cap = max_frequency(caps, topic)
+            if cap is None or cap > CONTACT_MAX_HZ:
+                fail(where, f"contact topic {topic!r} is capped at {cap} Hz, not at most {CONTACT_MAX_HZ}")
 
     for topic in ALL_CLASS_TOPICS:
         if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):

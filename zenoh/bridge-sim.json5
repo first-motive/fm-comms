@@ -132,6 +132,12 @@
           "^/control/descriptor$",
           "^/classical/can_pose$",
           "^/classical/phase$",
+          /// Contact at the gripper: what fm-skills' contact model predicts
+          /// from the wrist camera, and what fm-tactile's pads measure. A sim
+          /// run has no pads today, so nothing publishes the measured topic
+          /// yet; it is here so sim and anvil carry one contact contract.
+          "^/tactile/predicted/contact$",
+          "^/tactile/measured/contact$",
           /// Chest and wrist cameras, compressed only. A raw frame is 20-50x
           /// the bytes and nothing on the fabric reads one.
           "^/cam_[a-z0-9_]+/image_raw/compressed$",
@@ -148,6 +154,7 @@
         "/cam_[a-z0-9_]+/image_raw/compressed=10",
         "/cam_[a-z0-9_]+/camera_info=10",
         "/perception/debug/(chest|wrist)=5",
+        "/tactile/(predicted|measured)/contact=10",
       ],
 
       reliable_routes_blocking: false,
