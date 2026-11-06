@@ -201,9 +201,9 @@ else:
 /display_planned_path
 /control/descriptor  /classical/can_pose  /classical/phase
 /tactile/predicted/contact  /tactile/measured/contact               capped at 10 Hz
-/cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 10 Hz
-/cam_<role>/depth/compressed                                 capped at 10 Hz
-/cam_<role>/depth_sensor/compressed                          capped at 10 Hz
+/cam_<role>/image_raw/compressed  /cam_<role>/camera_info    capped at 15 Hz
+/cam_<role>/depth/compressed                                 capped at 15 Hz
+/cam_<role>/depth_sensor/compressed                          capped at 15 Hz
 ```
 
 The `/task`, `/perception`, and `/display_planned_path` names are the ones

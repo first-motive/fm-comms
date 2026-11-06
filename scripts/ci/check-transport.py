@@ -370,9 +370,11 @@ SIM_OUTSIDE_CONTRACT = [
 ]
 
 # Every camera topic the sim host publishes, and the rate it may cross at. A
-# camera at its render rate is the largest stream the host produces.
+# camera at its render rate is the largest stream the host produces. fm-sim's
+# cameras render at most 10 Hz; the cap leaves headroom above that, because a
+# cap at the render rate drops every early frame, independently per topic.
 SIM_CAMERA_TOPICS = [t for t in SIM_CONTRACT["publishers"] if t.startswith("/cam_")]
-SIM_CAMERA_MAX_HZ = 10.0
+SIM_CAMERA_MAX_HZ = 15.0
 
 # Perception's debug frames, and the rate they may cross at on any profile that
 # carries them: each holds a camera JPEG and every candidate's mask, so they
@@ -621,15 +623,15 @@ SIM_MUTATIONS = (
      "outside the contract"),
     ("a camera cap at 30 Hz",
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
-         rule.replace("=10", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
-     "above 10.0"),
+         rule.replace("=15", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "above 15.0"),
     ("a deleted camera cap",
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
          rule for rule in _ros2dds(c)["pub_max_frequencies"] if "compressed" not in rule]),
      "has no pub_max_frequencies cap"),
     ("a non-finite camera cap",
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
-         rule.replace("=10", "=nan") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+         rule.replace("=15", "=nan") for rule in _ros2dds(c)["pub_max_frequencies"]]),
      "finite positive float"),
     ("a wildcard that dodges every probe",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/perception/chest/.*$"),
