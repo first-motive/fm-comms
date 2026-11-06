@@ -152,15 +152,19 @@
       },
 
       /// A camera at its render rate is the largest thing this host could put
-      /// on the wire, and the viewer draws well below it. Its intrinsics are
+      /// on the wire, and the viewer draws well below it. The cap sits above
+      /// the 10 Hz a sim camera can render at, not on it: a cap is a minimum
+      /// gap between samples, so one at 10 Hz drops every frame that arrives a
+      /// few ms early, and drops colour and depth independently, which broke
+      /// fm-twin's pairing of a frame's colour with its depth. Its intrinsics are
       /// capped with it: they never change, yet arrive once per frame. A debug
       /// frame carries a camera JPEG too, and is held to the node's own
       /// default rate.
       pub_max_frequencies: [
-        "/cam_[a-z0-9_]+/image_raw/compressed=10",
-        "/cam_[a-z0-9_]+/camera_info=10",
-        "/cam_[a-z0-9_]+/depth/compressed=10",
-        "/cam_[a-z0-9_]+/depth_sensor/compressed=10",
+        "/cam_[a-z0-9_]+/image_raw/compressed=15",
+        "/cam_[a-z0-9_]+/camera_info=15",
+        "/cam_[a-z0-9_]+/depth/compressed=15",
+        "/cam_[a-z0-9_]+/depth_sensor/compressed=15",
         "/perception/debug/(chest|wrist)=5",
         "/tactile/(predicted|measured)/contact=10",
       ],
