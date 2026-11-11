@@ -21,8 +21,9 @@ Three passes, in order of how early they catch a mistake:
    fleet depends on: the router binds exactly two non-wildcard endpoints (its LAN
    address and its tailnet address), every bridge is a client with multicast off,
    the recorder never publishes raw frames, the robot never accepts a trajectory
-   from off-rig, the anvil workcell accepts nothing inbound at all, the sim host
-   carries exactly the simulation contract's topic list with its cameras capped,
+   from off-rig, the anvil workcell accepts nothing inbound and publishes only
+   its contract's topics, the sim host carries exactly the simulation
+   contract's topic list with its cameras capped,
    a workstation's second (Jazzy) sim bridge holds that same contract in the
    workstation's namespace under a node name of its own, its unit differs from
    the workstation's only in distro, config, and description, the cockpit
@@ -395,6 +396,43 @@ CONTACT_MAX_HZ = 10.0
 ALL_CLASS_TOPICS = ["/perception/chest"]
 
 
+# The anvil workcell's topic list, the one bridge-robot-anvil.json5 states:
+# state out, and nothing else. Graded the same way as SIM_CONTRACT: every
+# publisher rule is one of these names spelled literally or one of
+# ANVIL_PATTERN_RULES, and every name here must pass, so a rule widened to
+# `^/display_planned_path.*$`, or to `^/.*$`, cannot pass.
+ANVIL_CONTRACT = {
+    "publishers": [
+        "/joint_states",
+        "/tf",
+        "/tf_static",
+        "/hardware_state_controller/state",
+        "/recording_status",
+        "/controls_owner",
+        "/perception/chest",
+        "/display_planned_path",
+        "/task/events",
+        "/control/descriptor",
+        "/classical/can_pose",
+        "/classical/phase",
+        "/tactile/predicted/contact",
+        "/tactile/measured/contact",
+    ],
+}
+
+# The only non-literal rules the anvil profile may carry, compared string for
+# string. Each is open over one part of a name on purpose: the arm side of a
+# pose, the camera and its image stream, the class a mounted pack detects, and
+# the camera a debug frame comes from.
+ANVIL_PATTERN_RULES = (
+    "^/ee_pose_.*$",
+    "^/cam_.*/compressed$",
+    "^/perception/chest/.*$",
+    "^/perception/wrist/.*$",
+    "^/perception/debug/(chest|wrist)$",
+)
+
+
 # Topic names a bridge MUST carry, and the profile each belongs to. The mirror
 # of FORBIDDEN_TOPICS, and the check the workstation profile exists because of: a
 # bridge whose allowlist admits nothing holds a session, logs nothing, and looks
@@ -406,24 +444,15 @@ REQUIRED_TOPICS = {
     "processor": [("publishers", "/process/state"), ("subscribers", "/process/start"),
                   ("subscribers", "/process/hands")],
     "robot": [("publishers", "/joint_states")],
-    "robot-anvil": [
-        ("publishers", "/joint_states"),
-        ("publishers", "/hardware_state_controller/state"),
-        ("publishers", "/recording_status"),
-        ("publishers", "/controls_owner"),
+    # The contract's literal names, plus one probe per pattern rule so a
+    # pattern deleted outright is reported too.
+    "robot-anvil": [(kind, topic) for kind, topics in ANVIL_CONTRACT.items() for topic in topics] + [
         ("publishers", "/ee_pose_left"),
         ("publishers", "/cam_wrist_l/image_raw/compressed"),
-        ("publishers", "/perception/chest"),
+        ("publishers", "/perception/chest/can"),
         ("publishers", "/perception/wrist/can"),
         ("publishers", "/perception/debug/chest"),
         ("publishers", "/perception/debug/wrist"),
-        ("publishers", "/display_planned_path"),
-        ("publishers", "/task/events"),
-        ("publishers", "/control/descriptor"),
-        ("publishers", "/classical/can_pose"),
-        ("publishers", "/classical/phase"),
-        ("publishers", "/tactile/predicted/contact"),
-        ("publishers", "/tactile/measured/contact"),
     ],
     # Both halves of the union, which is the whole point of the profile.
     "workstation": [
@@ -479,19 +508,28 @@ def max_frequency(caps: list[tuple[str, float]], topic: str) -> float | None:
     return min(hits) if hits else None
 
 
-def check_sim_contract(where: str, caps: list[tuple[str, float]], allow: dict) -> None:
-    """Grade the sim profile against the contract list in both directions."""
-    extra_kinds = set(allow) - set(SIM_CONTRACT)
+def check_contract_rules(where: str, allow: dict, contract: dict, pattern_rules: tuple) -> None:
+    """Hold every rule to a contract's literal names and its fixed patterns.
+
+    The other direction, that every contract name is admitted, is graded
+    through REQUIRED_TOPICS.
+    """
+    extra_kinds = set(allow) - set(contract)
     if extra_kinds:
         fail(where, f"carries rule kinds outside the contract: {sorted(extra_kinds)}")
     # Exact, not sampled: a rule is either one contract topic spelled literally,
-    # or one of the four fixed camera patterns, string for string. A wildcard
-    # that happens to dodge every probe below still fails here.
+    # or one of the fixed patterns, string for string. A wildcard that happens
+    # to dodge every forbidden-name probe still fails here.
     for pattern in allow.get("publishers", []):
         body = pattern[1:-1] if pattern.startswith("^") and pattern.endswith("$") else None
-        is_literal = body is not None and re.escape(body) == body and body in SIM_CONTRACT["publishers"]
-        if not is_literal and pattern not in SIM_CAMERA_RULES:
-            fail(where, f"publisher rule {pattern!r} is neither a literal contract topic nor a fixed camera pattern")
+        is_literal = body is not None and re.escape(body) == body and body in contract["publishers"]
+        if not is_literal and pattern not in pattern_rules:
+            fail(where, f"publisher rule {pattern!r} is neither a literal contract topic nor a fixed pattern")
+
+
+def check_sim_contract(where: str, caps: list[tuple[str, float]], allow: dict) -> None:
+    """Grade the sim profile against the contract list in both directions."""
+    check_contract_rules(where, allow, SIM_CONTRACT, SIM_CAMERA_RULES)
     for kind, rules in allow.items():
         for pattern in rules:
             for topic in SIM_OUTSIDE_CONTRACT:
@@ -568,6 +606,8 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
     caps = frequency_caps(where, ros2dds)
     if profile == "sim":
         check_sim_contract(where, caps, allow)
+    if profile == "robot-anvil":
+        check_contract_rules(where, allow, ANVIL_CONTRACT, ANVIL_PATTERN_RULES)
 
     for topic in DEBUG_FRAME_TOPICS:
         if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
@@ -677,6 +717,27 @@ ANVIL_MUTATIONS = (
     ("a cap on the all-class chest topic",
      lambda c: _ros2dds(c)["pub_max_frequencies"].append("/perception/chest=10"),
      "not uncapped"),
+    ("a widened planned-path rule",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/display_planned_path.*$"),
+     "neither a literal contract topic"),
+    ("a wildcard publisher",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/.*$"),
+     "neither a literal contract topic"),
+    ("a widened pose pattern",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/ee_pose.*$"),
+     "neither a literal contract topic"),
+    ("a metacharacter in a literal",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/task/even.s$"),
+     "neither a literal contract topic"),
+    ("an action server rule",
+     lambda c: _ros2dds(c)["allow"].update(action_servers=["^/classical/pick_place$"]),
+     "rule kinds outside the contract"),
+    ("a deleted contract topic",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/recording_status$"),
+     "carries no publisher rule for '/recording_status'"),
+    ("a deleted pattern rule",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/ee_pose_.*$"),
+     "carries no publisher rule for '/ee_pose_left'"),
 )
 
 
