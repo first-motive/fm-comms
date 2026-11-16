@@ -71,8 +71,8 @@ show() {
     fm_log "  transport     $(fm_machine_get transport)"
     fm_log "  workload      $(fm_machine_get_opt workload || true)"
     # Only a robot host carries this, and on one it is what splits `robot` from
-    # `robot-anvil` — so an operator reading why the template came out as it did
-    # needs the field beside the profile it chose.
+    # `robot-anvil` or `robot-axol` — so an operator reading why the template
+    # came out as it did needs the field beside the profile it chose.
     fm_log "  robot         $(fm_machine_get_opt robot || true)"
     fm_log "  workspace     $(fm_machine_get workspace)"
   else

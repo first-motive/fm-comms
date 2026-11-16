@@ -633,7 +633,7 @@ fm_comms_router_user() {
 }
 
 # Echo the bridge profile this machine runs: recorder | processor | robot |
-# robot-anvil | workstation | sim | cockpit.
+# robot-anvil | robot-axol | workstation | sim | cockpit.
 #
 # Taken from the card's `workload`, which is the field that answers the question
 # `role` cannot — a recorder rig and a processor rig are both jetsons. That was
@@ -660,20 +660,42 @@ fm_comms_bridge_profile() {
     fm_err "  or force one for a bench run: FM_BRIDGE_PROFILE=<profile>"
     return 1
   fi
-  # An Anvil workcell is a robot with no inbound half. The desktop drives it
-  # through the agent's queryables and never publishes to it, so it takes the
-  # profile that carries no subscribers at all rather than the arm profile that
-  # accepts Servo jogs. The card's `robot` field names the kind; the workload
-  # stays `robot`, because that is still the work this host does.
+  # An Anvil workcell or an Axol is a robot with no inbound half. The desktop
+  # drives either through the agent's queryables and never publishes to it, so
+  # each takes a profile that carries no subscribers at all rather than the arm
+  # profile that accepts Servo jogs. The card's `robot` field names the kind; the
+  # workload stays `robot`, because that is still the work this host does.
+  #
+  # The refinement fails closed. `robot` is the one profile that accepts
+  # commands inbound, so a kind this list does not know is refused rather than
+  # left on it: an Axol card misspelled `Axol` would otherwise reopen the
+  # controller command path the axol profile exists to close. A card with no
+  # kind keeps `robot` only off the `robot` role — a First Motive Servo rig is a
+  # jetson whose card carries no kind, and fm-setup requires one on every
+  # vendor robot.
   #
   # Skipped when FM_BRIDGE_PROFILE is set: an explicitly forced profile is a
   # bench run, and refining it out from under the operator would render a file
   # they did not ask for.
   if [ "$profile" = robot ] && [ -z "${FM_BRIDGE_PROFILE:-}" ]; then
-    local kind
+    local kind role
     kind="$(fm_machine_get_opt robot)" || return 1
+    role="$(fm_machine_get_opt role)" || return 1
     case "$kind" in
       anvil-*) profile=robot-anvil ;;
+      axol | axol-*) profile=robot-axol ;;
+      "")
+        if [ "$role" = robot ]; then
+          fm_err "this card's role is 'robot' but it names no robot kind"
+          fm_err "  set one: fm machine init --robot <anvil-openarm-v2|axol>"
+          return 1
+        fi
+        ;;
+      *)
+        fm_err "unknown robot kind on this card: '$kind' (want anvil-* or axol)"
+        fm_err "  refused rather than given the robot profile, which accepts commands inbound"
+        return 1
+        ;;
     esac
   fi
   # The profile becomes a path segment, so hold it to the shape a filename can

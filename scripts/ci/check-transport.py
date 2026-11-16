@@ -21,8 +21,9 @@ Three passes, in order of how early they catch a mistake:
    fleet depends on: the router binds exactly two non-wildcard endpoints (its LAN
    address and its tailnet address), every bridge is a client with multicast off,
    the recorder never publishes raw frames, the robot never accepts a trajectory
-   from off-rig, the anvil workcell accepts nothing inbound and publishes only
-   its contract's topics, the sim host carries exactly the simulation
+   from off-rig, the anvil workcell and the axol robot accept nothing inbound
+   and publish only their contracts' topics, the axol's cameras capped just
+   above their driver rate, the sim host carries exactly the simulation
    contract's topic list with its cameras capped,
    a workstation's second (Jazzy) sim bridge holds that same contract in the
    workstation's namespace under a node name of its own, its unit differs from
@@ -78,6 +79,12 @@ CARDS = {
         "workload": "robot",
         "robot": "anvil-openarm-v2",
     },
+    "robot-axol": {
+        "name": "fm-rob-02",
+        "role": "robot",
+        "workload": "robot",
+        "robot": "axol",
+    },
     "workstation": {"name": "fm-ws-01", "role": "workstation", "workload": "workstation"},
     "sim": {"name": "fm-ws-01", "role": "workstation", "workload": "sim"},
     "cockpit": {"name": "fm-mac-02", "role": "mac", "workload": "cockpit"},
@@ -95,7 +102,7 @@ BRIDGE_PROFILES = tuple(sorted(
 # Profiles that accept no inbound topic at all. Each is driven through an
 # agent's queryables on the host, so a subscriber rule there is an unreviewed
 # command path into the controllers.
-NO_INBOUND_PROFILES = ("robot-anvil", "sim")
+NO_INBOUND_PROFILES = ("robot-anvil", "robot-axol", "sim")
 NO_INBOUND_KINDS = ("subscribers", "service_servers", "service_clients")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
@@ -256,6 +263,28 @@ FORBIDDEN_TOPICS = {
         ("service_servers", "/perception/set_debug"),
     ],
     "processor": [],
+    "robot-axol": [
+        # Everything that moves an Axol: the shim's command topic into the core,
+        # the forward position controllers, the trajectory controllers and their
+        # action, and the controller switch that arms one or the other.
+        ("subscribers", "/axol/joint_commands"),
+        ("subscribers", "/axol_left_forward_position_controller/commands"),
+        ("subscribers", "/axol_right_forward_position_controller/commands"),
+        ("subscribers", "/axol_left_jtc/joint_trajectory"),
+        ("subscribers", "/axol_right_jtc/joint_trajectory"),
+        ("service_servers", "/axol_left_jtc/_action/send_goal"),
+        ("service_servers", "/axol_right_jtc/_action/send_goal"),
+        ("service_servers", "/controller_manager/switch_controller"),
+        # The shim's own state topic, which joint_state_broadcaster republishes
+        # as /joint_states. Carrying both would give the fabric two sources.
+        ("publishers", "/axol/joint_states"),
+        # Compressed only, colour and depth alike.
+        ("publishers", "/cam_head/image_raw"),
+        ("publishers", "/cam_wrist_left/image_raw"),
+        ("publishers", "/cam_wrist_right/image_raw"),
+        ("publishers", "/cam_head/depth_sensor"),
+        ("publishers", "/cam_head/depth/depth_registered"),
+    ],
     "workstation": [
         # The workstation runs the sim the same way a rig runs an arm, so the
         # rule that keeps a remote publisher off the controllers holds here too.
@@ -433,6 +462,45 @@ ANVIL_PATTERN_RULES = (
 )
 
 
+# The Axol's topic list, the one bridge-robot-axol.json5 states: state and
+# sensing out, nothing else. Every rule must be one of these names spelled
+# literally, with no pattern rule at all, so a new camera is an edit here.
+AXOL_CONTRACT = {
+    "publishers": [
+        "/joint_states",
+        "/tf",
+        "/tf_static",
+        "/robot_description",
+        "/cam_head/image_raw/compressed",
+        "/cam_head/camera_info",
+        "/cam_wrist_left/image_raw/compressed",
+        "/cam_wrist_left/camera_info",
+        "/cam_wrist_right/image_raw/compressed",
+        "/cam_wrist_right/camera_info",
+        "/cam_head/depth_sensor/compressed",
+    ],
+}
+
+# Every camera topic the Axol publishes, and the rate it may cross at. The ZED
+# driver runs at 15 Hz; the cap leaves headroom above that for the reason
+# SIM_CAMERA_MAX_HZ does, and must stay above the driver rate as well as at or
+# below this ceiling, since a cap on the rate drops colour and depth frames
+# independently.
+AXOL_CAMERA_TOPICS = [t for t in AXOL_CONTRACT["publishers"] if t.startswith("/cam_")]
+AXOL_CAMERA_HZ = 15.0
+AXOL_CAMERA_MAX_HZ = 20.0
+
+
+def check_axol_cameras(where: str, caps: list[tuple[str, float]]) -> None:
+    for topic in AXOL_CAMERA_TOPICS:
+        cap = max_frequency(caps, topic)
+        if cap is None:
+            fail(where, f"camera topic {topic!r} has no pub_max_frequencies cap")
+        elif not AXOL_CAMERA_HZ < cap <= AXOL_CAMERA_MAX_HZ:
+            fail(where, f"camera topic {topic!r} is capped at {cap} Hz, not above "
+                        f"{AXOL_CAMERA_HZ} and at most {AXOL_CAMERA_MAX_HZ}")
+
+
 # Topic names a bridge MUST carry, and the profile each belongs to. The mirror
 # of FORBIDDEN_TOPICS, and the check the workstation profile exists because of: a
 # bridge whose allowlist admits nothing holds a session, logs nothing, and looks
@@ -461,6 +529,7 @@ REQUIRED_TOPICS = {
         ("publishers", "/process/state"),
         ("subscribers", "/process/start"),
     ],
+    "robot-axol": [(kind, topic) for kind, topics in AXOL_CONTRACT.items() for topic in topics],
     "sim": [(kind, topic) for kind, topics in SIM_CONTRACT.items() for topic in topics],
     "cockpit": [("subscribers", "/fm_ws_01/joint_states")],
 }
@@ -608,6 +677,9 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
         check_sim_contract(where, caps, allow)
     if profile == "robot-anvil":
         check_contract_rules(where, allow, ANVIL_CONTRACT, ANVIL_PATTERN_RULES)
+    if profile == "robot-axol":
+        check_contract_rules(where, allow, AXOL_CONTRACT, ())
+        check_axol_cameras(where, caps)
 
     for topic in DEBUG_FRAME_TOPICS:
         if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
@@ -741,6 +813,84 @@ ANVIL_MUTATIONS = (
 )
 
 
+# Ways the axol profile could drift, each applied to the real rendered config.
+# The command paths are the ones most likely to be added "just for teleop".
+AXOL_MUTATIONS = (
+    ("a subscriber rule",
+     lambda c: _ros2dds(c)["allow"].update(subscribers=["^/axol/joint_commands$"]),
+     "accepts no inbound"),
+    ("a controller switch service rule",
+     lambda c: _ros2dds(c)["allow"].update(service_servers=["^/controller_manager/switch_controller$"]),
+     "accepts no inbound"),
+    ("a service client rule",
+     lambda c: _ros2dds(c)["allow"].update(service_clients=["^/controller_manager/.*$"]),
+     "accepts no inbound"),
+    ("an action server rule",
+     lambda c: _ros2dds(c)["allow"].update(action_servers=["^/axol_left_jtc/follow_joint_trajectory$"]),
+     "rule kinds outside the contract"),
+    ("a camera pattern",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_[a-z0-9_]+/image_raw/compressed$"),
+     "neither a literal contract topic"),
+    ("a wildcard publisher",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/.*$"),
+     "neither a literal contract topic"),
+    ("a camera cap on the driver rate",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule.replace("=20", "=15") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "not above 15.0"),
+    ("a camera cap at 30 Hz",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule.replace("=20", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
+     "at most 20.0"),
+    ("a deleted depth cap",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[
+         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "depth" not in rule]),
+     "has no pub_max_frequencies cap"),
+    ("a deleted depth topic",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/cam_head/depth_sensor/compressed$"),
+     "carries no publisher rule for '/cam_head/depth_sensor/compressed'"),
+)
+
+
+# How a `robot` card's kind refines its profile, as (role, kind, want): the
+# profile chosen, or None for a refusal. `robot` is the one profile that accepts
+# commands inbound, so the refinement must fail closed: a kind it does not know,
+# or a vendor robot's card with no kind, is refused rather than left on `robot`.
+# A kind of None means the card carries no `robot` field at all.
+ROBOT_KIND_CASES = (
+    ("jetson", None, "robot"),
+    ("robot", "anvil-openarm-v2", "robot-anvil"),
+    ("robot", "axol", "robot-axol"),
+    ("robot", "axol-v2", "robot-axol"),
+    ("robot", None, None),
+    ("robot", "", None),
+    ("robot", "Axol", None),
+    ("robot", "axol ", None),
+    ("robot", "forklift", None),
+    ("jetson", "forklift", None),
+)
+
+
+def check_robot_kinds(workdir: Path) -> None:
+    """Grade fm_comms_bridge_profile on each card in ROBOT_KIND_CASES."""
+    for role, kind, want in ROBOT_KIND_CASES:
+        card = {"schema_version": 1, "name": "fm-rob-09", "role": role, "fleet": "prod",
+                "transport": "zenoh", "workload": "robot", "workspace": "/home/fm/fm"}
+        if kind is not None:
+            card["robot"] = kind
+        path = workdir / "machine-kind.json"
+        path.write_text(json.dumps(card))
+        env = {k: v for k, v in os.environ.items() if k != "FM_BRIDGE_PROFILE"}
+        env["FM_MACHINE_FILE"] = str(path)
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1/lib.sh" && fm_comms_bridge_profile', "_", str(ROOT)],
+            env=env, capture_output=True, text=True,
+        )
+        got = result.stdout.strip() if result.returncode == 0 else None
+        if got != want:
+            fail("bridge profile", f"role {role!r} with robot kind {kind!r} selected {got!r}, want {want!r}")
+
+
 def check_mutations(name: str, config, mutations: tuple, check) -> None:
     """Grade each mutation case against the check's real findings."""
     for description, mutate, expected in mutations:
@@ -872,6 +1022,8 @@ def main() -> int:
             if any(path.stat().st_mode & 0o007 for path in [log, *archives]):
                 fail("router service", "logs are world-accessible")
 
+        check_robot_kinds(workdir)
+
         rendered = render("router", "router", CARDS["router"], workdir)
         if rendered is not None:
             try:
@@ -898,6 +1050,8 @@ def main() -> int:
                 check_mutations("sim", config, SIM_MUTATIONS, lambda c: check_bridge("sim", c))
             if profile == "robot-anvil":
                 check_mutations("robot-anvil", config, ANVIL_MUTATIONS, lambda c: check_bridge("robot-anvil", c))
+            if profile == "robot-axol":
+                check_mutations("robot-axol", config, AXOL_MUTATIONS, lambda c: check_bridge("robot-axol", c))
             # A host's one bridge keeps the plain node name, which the sim pair
             # below extends. The cockpit has no namespace to derive it from.
             ros2dds = _ros2dds(config)
