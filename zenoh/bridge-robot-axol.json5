@@ -1,0 +1,109 @@
+/// zenoh-bridge-ros2dds on an AXOL robot host — the Jetson that runs the Axol's
+/// ros2_control graph and its ZED cameras in the fm-axol container.
+///
+/// Like the anvil profile, this is the robot profile with the commands taken
+/// out. The desktop drives an Axol through `fm/robot/<ns>/*` queryables served
+/// by fm-robot-agent, which reaches the robot on the host; nothing off-host
+/// publishes to it. So the bridge carries state and sensing outward and accepts
+/// nothing inward.
+///
+/// `/joint_states` lands on `<ns>/joint_states`, the key fm-robot-agent
+/// publishes the Axol's telemetry on when the ROS graph is down: the agent
+/// derives its namespace from the card's name the same way the render does, and
+/// stops its own stream while `ros` mode is up, so the fabric key keeps one
+/// source either way. Both are CDR `sensor_msgs/JointState`, so the desktop
+/// decodes them alike.
+///
+/// The fm-axol container holds DDS to loopback on the fleet's domain, and the
+/// bridge joins it there: FM_DDS_IFACE stays unset on this host, so the unit
+/// runs with ROS_LOCALHOST_ONLY=1 and the loopback Cyclone profile. The
+/// container is Jazzy, so the host's fm-comms.env sets FM_ROS_DISTRO=jazzy.
+///
+/// This file is a TEMPLATE. `scripts/install-bridge.sh` renders it and writes the
+/// result to /etc/fm-comms/bridge.json5. Committed files carry placeholders only —
+/// never a real address. Read the render before installing it:
+///
+///     ./run.sh render bridge
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<rune>:7447. Fleet-wide, from
+///                         /etc/fm-comms.env.
+///   FM_RIG_NAMESPACE      this robot's ROS namespace. Derived from the machine
+///                         identity card's name and typed nowhere: fm-rob-02
+///                         becomes fm_rob_02, because a ROS name may not carry
+///                         a hyphen.
+///   FM_ROS_DOMAIN_ID      the DDS domain the robot's nodes run on. Fleet-wide,
+///                         from /etc/fm-comms.env.
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      namespace: "/${FM_RIG_NAMESPACE}",
+      nodename: "zenoh_bridge_${FM_RIG_NAMESPACE}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      /// Allowlist, and ONLY an allowlist. zenoh-plugin-ros2dds flattens allow
+      /// and deny into a single untagged choice, so a config carrying both is
+      /// refused at startup as "unknown field `deny`" — which reads as a typo
+      /// and is not one.
+      ///
+      /// The rule enforced by absence is the anvil's: there is no `subscribers`
+      /// list, and no service or action list, so no key on the fabric can reach
+      /// a DDS writer here. `/axol/joint_commands`, the forward position
+      /// controllers, and the trajectory controllers all move the arms, and
+      /// scripts/ci/check-transport.py tests each name against these rules on
+      /// every pull request.
+      ///
+      /// Every rule is one topic spelled literally, so a new camera or a new
+      /// topic is a decision made here. `/tf_static` and `/robot_description`
+      /// are TRANSIENT_LOCAL; the plugin discovers that from the writer and
+      /// serves late joiners from its own cache, with no configuration.
+      allow: {
+        publishers: [
+          /// Where the arms and grippers are, from ros2_control's
+          /// joint_state_broadcaster.
+          "^/joint_states$",
+          /// The frame tree, camera optical frames included, and the URDF the
+          /// desktop draws the robot from.
+          "^/tf$",
+          "^/tf_static$",
+          "^/robot_description$",
+          /// The ZED cameras, compressed only. A raw frame is 20-50x the bytes
+          /// and nothing on the fabric reads one.
+          "^/cam_head/image_raw/compressed$",
+          "^/cam_head/camera_info$",
+          "^/cam_wrist_left/image_raw/compressed$",
+          "^/cam_wrist_left/camera_info$",
+          "^/cam_wrist_right/image_raw/compressed$",
+          "^/cam_wrist_right/camera_info$",
+          /// The head camera's stereo depth, a 16-bit PNG in millimetres
+          /// stamped with its colour frame. fm-twin reads it.
+          "^/cam_head/depth_sensor/compressed$",
+        ],
+      },
+
+      /// The ZED driver publishes at 15 Hz. The cap sits above that, not on
+      /// it, for the reason bridge-sim.json5 gives: a cap is a minimum gap
+      /// between samples, so one at the camera rate drops every frame that
+      /// arrives a few ms early, independently per topic, and fm-twin loses the
+      /// pairing of a colour frame with its depth. Intrinsics are capped with
+      /// their camera: they never change, yet arrive once per frame.
+      pub_max_frequencies: [
+        "/joint_states=50",
+        "/tf=50",
+        "/cam_[a-z0-9_]+/image_raw/compressed=20",
+        "/cam_[a-z0-9_]+/camera_info=20",
+        "/cam_[a-z0-9_]+/depth_sensor/compressed=20",
+      ],
+
+      reliable_routes_blocking: false,
+    },
+  },
+}

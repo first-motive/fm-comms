@@ -8,8 +8,8 @@
 # topics cross depends on what work the machine does, which the card's `workload`
 # names: it selects zenoh/bridge-<profile>.json5 (recorder | processor | robot |
 # workstation | sim | cockpit). A `robot` host whose card also names an anvil
-# `robot` kind takes bridge-robot-anvil.json5 instead — same work, no inbound
-# half.
+# or axol `robot` kind takes bridge-robot-anvil.json5 or bridge-robot-axol.json5
+# instead — same work, no inbound half.
 #
 # Two service paths, chosen by OS, because the two machines are not alike:
 #

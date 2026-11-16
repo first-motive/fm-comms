@@ -131,18 +131,45 @@ recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state, frames, cameras, perception, planned path, task events, control descriptor, and contact out, nothing in
+robot-axol   an Axol: joint states, frames, description, cameras, and head depth out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state, 10 Hz cameras, and contact out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
 cockpit      the Mac: the fleet's published set in, teleop commands out
 ```
 
-`robot-anvil` is the one profile a card does not name directly. A host whose
+`robot-anvil` is one of two profiles a card does not name directly. A host whose
 workload is `robot` and whose `robot` field names an anvil kind takes it instead
 of `robot`, because an Anvil is driven through the robot agent's queryables and
 never by publishing to it. It is the robot profile with the inbound half removed:
 joint states, hardware state, recording status, controls owner, end effector
 poses, and compressed camera frames go out, and no topic comes back.
+
+`robot-axol` is taken the same way, by a `robot` host whose `robot` field is
+`axol`, and for the same reason: fm-robot-agent drives the Axol, and nothing on
+the fabric publishes to it. It carries no subscriber, service, or action rule,
+and every publisher rule is one name spelled literally:
+
+```
+/joint_states  /tf                                                   capped at 50 Hz
+/tf_static  /robot_description                                      latched
+/cam_head/image_raw/compressed  /cam_head/camera_info                capped at 20 Hz
+/cam_wrist_left/image_raw/compressed  /cam_wrist_left/camera_info    capped at 20 Hz
+/cam_wrist_right/image_raw/compressed  /cam_wrist_right/camera_info  capped at 20 Hz
+/cam_head/depth_sensor/compressed                                    capped at 20 Hz
+```
+
+The ZED driver publishes at 15 Hz; the cap sits above that so colour and depth
+keep their pairing, as on `sim`. `/joint_states` lands on `<ns>/joint_states`,
+the same key fm-robot-agent publishes the Axol's telemetry on while the ROS
+graph is down, so the desktop reads one key whichever source is live. The
+bridge joins the fm-axol container's loopback DDS, so the host leaves
+`FM_DDS_IFACE` unset and sets `FM_ROS_DISTRO=jazzy`. `check-transport.py` holds
+the profile to this list and refuses any rule that admits an Axol command topic
+(`/axol/joint_commands`, a forward position or trajectory controller,
+`/controller_manager/switch_controller`). A `robot` card whose kind is
+neither `anvil-*` nor `axol`/`axol-*` is refused at render rather than given the
+inbound-accepting `robot` profile, as is a `robot`-role card with no kind.
 
 `workstation` is the union of `robot` and `processor`, and exists because the
 tower is genuinely both machines: the sim publishes the joint states the cockpit
