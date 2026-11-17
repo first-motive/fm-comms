@@ -473,19 +473,20 @@ AXOL_CONTRACT = {
         "/robot_description",
         "/cam_head/image_raw/compressed",
         "/cam_head/camera_info",
+        "/cam_head_right/image_raw/compressed",
+        "/cam_head_right/camera_info",
         "/cam_wrist_left/image_raw/compressed",
         "/cam_wrist_left/camera_info",
         "/cam_wrist_right/image_raw/compressed",
         "/cam_wrist_right/camera_info",
-        "/cam_head/depth_sensor/compressed",
     ],
 }
 
-# Every camera topic the Axol publishes, and the rate it may cross at. The ZED
-# driver runs at 15 Hz; the cap leaves headroom above that for the reason
-# SIM_CAMERA_MAX_HZ does, and must stay above the driver rate as well as at or
-# below this ceiling, since a cap on the rate drops colour and depth frames
-# independently.
+# Every camera topic the Axol publishes, and the rate it may cross at. The
+# cameras run at 15 Hz; the cap leaves headroom above that for the reason
+# SIM_CAMERA_MAX_HZ does, and must stay above the camera rate as well as at or
+# below this ceiling, since a cap on the rate drops each topic's frames
+# independently and would split the head's two eyes.
 AXOL_CAMERA_TOPICS = [t for t in AXOL_CONTRACT["publishers"] if t.startswith("/cam_")]
 AXOL_CAMERA_HZ = 15.0
 AXOL_CAMERA_MAX_HZ = 20.0
@@ -842,13 +843,19 @@ AXOL_MUTATIONS = (
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
          rule.replace("=20", "=30") for rule in _ros2dds(c)["pub_max_frequencies"]]),
      "at most 20.0"),
-    ("a deleted depth cap",
+    ("a deleted camera_info cap",
      lambda c: _ros2dds(c).update(pub_max_frequencies=[
-         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "depth" not in rule]),
+         rule for rule in _ros2dds(c)["pub_max_frequencies"] if "camera_info" not in rule]),
      "has no pub_max_frequencies cap"),
-    ("a deleted depth topic",
-     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/cam_head/depth_sensor/compressed$"),
-     "carries no publisher rule for '/cam_head/depth_sensor/compressed'"),
+    ("a deleted right head eye",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/cam_head_right/image_raw/compressed$"),
+     "carries no publisher rule for '/cam_head_right/image_raw/compressed'"),
+    ("a deleted right head eye camera_info",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/cam_head_right/camera_info$"),
+     "carries no publisher rule for '/cam_head_right/camera_info'"),
+    ("robot-side depth, which the Axol no longer sends",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_head/depth_sensor/compressed$"),
+     "neither a literal contract topic"),
 )
 
 

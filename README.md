@@ -131,7 +131,7 @@ recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state, frames, cameras, perception, planned path, task events, control descriptor, and contact out, nothing in
-robot-axol   an Axol: joint states, frames, description, cameras, and head depth out, nothing in
+robot-axol   an Axol: joint states, frames, description, cameras (head stereo pair) out, nothing in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state, 10 Hz cameras, and contact out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
@@ -154,13 +154,14 @@ and every publisher rule is one name spelled literally:
 /joint_states  /tf                                                   capped at 50 Hz
 /tf_static  /robot_description                                      latched
 /cam_head/image_raw/compressed  /cam_head/camera_info                capped at 20 Hz
+/cam_head_right/image_raw/compressed  /cam_head_right/camera_info    capped at 20 Hz
 /cam_wrist_left/image_raw/compressed  /cam_wrist_left/camera_info    capped at 20 Hz
 /cam_wrist_right/image_raw/compressed  /cam_wrist_right/camera_info  capped at 20 Hz
-/cam_head/depth_sensor/compressed                                    capped at 20 Hz
 ```
 
-The ZED driver publishes at 15 Hz; the cap sits above that so colour and depth
-keep their pairing, as on `sim`. `/joint_states` lands on `<ns>/joint_states`,
+The cameras publish at 15 Hz; the cap sits above that so the head's two eyes
+keep their pairing, as colour and depth do on `sim`. The robot sends no depth:
+it is computed from the head's stereo pair off the robot. `/joint_states` lands on `<ns>/joint_states`,
 the same key fm-robot-agent publishes the Axol's telemetry on while the ROS
 graph is down, so the desktop reads one key whichever source is live. The
 bridge joins the fm-axol container's loopback DDS, so the host leaves

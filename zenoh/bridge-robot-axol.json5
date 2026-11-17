@@ -79,28 +79,30 @@
           /// and nothing on the fabric reads one.
           "^/cam_head/image_raw/compressed$",
           "^/cam_head/camera_info$",
+          /// The head's right eye, rectified with the left; its camera_info
+          /// carries the baseline. Depth is computed from the pair off the
+          /// robot (fm-axol computes none: a CUDA context beside Almond's
+          /// camera relay stalls it).
+          "^/cam_head_right/image_raw/compressed$",
+          "^/cam_head_right/camera_info$",
           "^/cam_wrist_left/image_raw/compressed$",
           "^/cam_wrist_left/camera_info$",
           "^/cam_wrist_right/image_raw/compressed$",
           "^/cam_wrist_right/camera_info$",
-          /// The head camera's stereo depth, a 16-bit PNG in millimetres
-          /// stamped with its colour frame. fm-twin reads it.
-          "^/cam_head/depth_sensor/compressed$",
         ],
       },
 
-      /// The ZED driver publishes at 15 Hz. The cap sits above that, not on
-      /// it, for the reason bridge-sim.json5 gives: a cap is a minimum gap
-      /// between samples, so one at the camera rate drops every frame that
-      /// arrives a few ms early, independently per topic, and fm-twin loses the
-      /// pairing of a colour frame with its depth. Intrinsics are capped with
-      /// their camera: they never change, yet arrive once per frame.
+      /// The cameras publish at 15 Hz. The cap sits above that, not on it, for
+      /// the reason bridge-sim.json5 gives: a cap is a minimum gap between
+      /// samples, so one at the camera rate drops every frame that arrives a
+      /// few ms early, independently per topic, and the head's two eyes lose
+      /// their pairing. Intrinsics are capped with their camera: they never
+      /// change, yet arrive once per frame.
       pub_max_frequencies: [
         "/joint_states=50",
         "/tf=50",
         "/cam_[a-z0-9_]+/image_raw/compressed=20",
         "/cam_[a-z0-9_]+/camera_info=20",
-        "/cam_[a-z0-9_]+/depth_sensor/compressed=20",
       ],
 
       reliable_routes_blocking: false,
