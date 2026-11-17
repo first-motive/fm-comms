@@ -821,7 +821,11 @@ fm_comms_render() {
       # this bridge joining a graph that somebody else pinned to an interface?
       # FM_DDS_IFACE answers it. Unset means every node here is localhost-only,
       # which is fm-ros2's own default and the Mac cockpit's.
-      if [ -n "${FM_DDS_IFACE:-}" ]; then
+      # A loopback name is the third shape: a graph pinned to loopback, which
+      # has no multicast (the Axol's fm-axol container).
+      if [[ "${FM_DDS_IFACE:-}" =~ ^lo[0-9]*$ ]]; then
+        fm_render_template "$root/zenoh/bridge-cyclonedds-loopback.xml.in" "$dest" FM_DDS_IFACE
+      elif [ -n "${FM_DDS_IFACE:-}" ]; then
         fm_render_template "$root/zenoh/bridge-cyclonedds-iface.xml.in" "$dest" FM_DDS_IFACE
       elif [ "$dest" = "-" ]; then
         cat "$root/zenoh/bridge-cyclonedds.xml"

@@ -146,12 +146,14 @@ def card_json(profile: str, spec: dict[str, str]) -> str:
     return json.dumps(card)
 
 
-def render(kind: str, profile: str, spec: dict[str, str], workdir: Path) -> str | None:
-    """Render one config through the repo's own render verb."""
+def render(kind: str, profile: str, spec: dict[str, str], workdir: Path,
+           extra_env: str = "") -> str | None:
+    """Render one config through the repo's own render verb; `extra_env` is
+    appended to the fixture env file."""
     card = workdir / f"machine-{profile}.json"
     card.write_text(card_json(profile, spec))
     envfile = workdir / "fm-comms.env"
-    envfile.write_text(FIXTURE_ENV)
+    envfile.write_text(FIXTURE_ENV + extra_env)
 
     env = dict(os.environ)
     env.update(
@@ -878,6 +880,31 @@ ROBOT_KIND_CASES = (
 )
 
 
+def check_bridge_dds(workdir: Path) -> None:
+    """The bridge's CycloneDDS config takes the shape of the graph it joins."""
+    # FM_DDS_IFACE value -> (loopback discovery, pinned interface)
+    shapes = {
+        None: (True, None),
+        "lo": (True, "lo"),
+        "lo0": (True, "lo0"),
+        "eth0": (False, "eth0"),
+        "lox": (False, "lox"),  # a near miss is not loopback
+    }
+    for iface, (loopback, interface) in shapes.items():
+        where = f"cyclonedds ({iface or 'no FM_DDS_IFACE'})"
+        extra = f"FM_DDS_IFACE={iface}\n" if iface else ""
+        body = render("cyclonedds", "robot", CARDS["robot"], workdir, extra)
+        if body is None:
+            continue
+        multicast = "AllowMulticast>false" if loopback else "AllowMulticast>true"
+        if multicast not in body:
+            fail(where, f"wants {multicast}")
+        if interface and f'NetworkInterface name="{interface}"' not in body:
+            fail(where, f"is not pinned to {interface}")
+        if loopback and '<Peer address="localhost"/>' not in body:
+            fail(where, "loopback discovery needs the localhost peer")
+
+
 def check_robot_kinds(workdir: Path) -> None:
     """Grade fm_comms_bridge_profile on each card in ROBOT_KIND_CASES."""
     for role, kind, want in ROBOT_KIND_CASES:
@@ -1030,6 +1057,7 @@ def main() -> int:
                 fail("router service", "logs are world-accessible")
 
         check_robot_kinds(workdir)
+        check_bridge_dds(workdir)
 
         rendered = render("router", "router", CARDS["router"], workdir)
         if rendered is not None:

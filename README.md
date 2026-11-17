@@ -164,8 +164,10 @@ keep their pairing, as colour and depth do on `sim`. The robot sends no depth:
 it is computed from the head's stereo pair off the robot. `/joint_states` lands on `<ns>/joint_states`,
 the same key fm-robot-agent publishes the Axol's telemetry on while the ROS
 graph is down, so the desktop reads one key whichever source is live. The
-bridge joins the fm-axol container's loopback DDS, so the host leaves
-`FM_DDS_IFACE` unset and sets `FM_ROS_DISTRO=jazzy`. `check-transport.py` holds
+bridge joins the fm-axol container's DDS, which is pinned to loopback, so the
+host sets `FM_DDS_IFACE=lo` (the bridge then renders the loopback profile pinned
+to `lo`; left unset, Cyclone picks the LAN interface and routes nothing) and
+`FM_ROS_DISTRO=jazzy`. `check-transport.py` holds
 the profile to this list and refuses any rule that admits an Axol command topic
 (`/axol/joint_commands`, a forward position or trajectory controller,
 `/controller_manager/switch_controller`). A `robot` card whose kind is

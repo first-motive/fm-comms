@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  bridge-cyclonedds-loopback.xml.in — the DDS side of a bridge joining a graph
+  pinned to the loopback interface.
+
+  The Almond Axol's ROS graph (fm-axol's container) binds CycloneDDS to `lo` with
+  multicast off, so no DDS crosses the LAN. The stock loopback profile
+  (`bridge-cyclonedds.xml`) names no interface, so Cyclone picks the first real
+  one and advertises its address; the loopback-bound nodes cannot answer there.
+  The bridge starts, connects to the router, routes nothing, and logs no error.
+  The interface profile (`bridge-cyclonedds-iface.xml.in`) does not fit either:
+  it turns multicast on, and loopback has none.
+
+  So a loopback name in FM_DDS_IFACE (`lo`, or `lo0` on macOS) renders this:
+  the loopback profile, pinned to that interface.
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${FM_DDS_IFACE}"/>
+      </Interfaces>
+      <!-- Loopback has no multicast; discovery probes localhost instead. -->
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+      <!-- As the stock loopback profile: unicast discovery needs a distinct
+           participant index per process, and the default ceiling of nine is
+           too low for a robot's graph plus a few `ros2` commands. -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
