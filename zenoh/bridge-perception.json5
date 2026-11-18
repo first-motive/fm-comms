@@ -101,6 +101,9 @@
           /// The two cameras perception reads, compressed.
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_head/image_raw/compressed$",
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_wrist_right/image_raw/compressed$",
+          /// The head's lens, which places the chest rays; without it perception falls back to
+          /// its yaml's nominal values.
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_head/camera_info$",
         ],
         service_servers: [
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/set_debug$",

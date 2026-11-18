@@ -608,6 +608,7 @@ PERCEPTION_BRIDGE_CONTRACT = {
         "/tf_static",
         "/cam_head/image_raw/compressed",
         "/cam_wrist_right/image_raw/compressed",
+        "/cam_head/camera_info",
     ],
     "service_servers": AXOL_CONTRACT["service_clients"],
 }
