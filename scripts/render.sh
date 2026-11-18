@@ -12,6 +12,9 @@
 #     ./run.sh render bridge-unit       what fm-zenoh-bridge.service would be
 #     ./run.sh render bridge-sim        a workstation's sim bridge config
 #     ./run.sh render bridge-sim-unit   what fm-zenoh-bridge-sim.service would be
+#     ./run.sh render bridge-perception a workstation's remote-perception bridge config
+#     ./run.sh render bridge-perception-unit
+#                                       what fm-zenoh-bridge-perception.service would be
 #     ./run.sh render cyclonedds        what /etc/fm-comms/cyclonedds.xml would be
 #     ./run.sh render router            what /etc/fm-comms/router.json5 would be
 #     ./run.sh render launchd           the router's macOS LaunchDaemon plist
@@ -44,6 +47,10 @@ Usage: ./run.sh render <what> [-o FILE]
   bridge-unit  the bridge's systemd unit (Linux)
   bridge-sim   a workstation's second, Jazzy bridge for sim runs
   bridge-sim-unit
+               that bridge's systemd unit
+  bridge-perception
+               a workstation's Jazzy bridge for perception it runs for a robot
+  bridge-perception-unit
                that bridge's systemd unit
   cyclonedds   the bridge's CycloneDDS config, shaped by FM_DDS_IFACE
   launchagent  the Mac bridge's LaunchAgent plist
@@ -126,7 +133,7 @@ main() {
 
   case "$what" in
     show) show ;;
-    router|launchd|launchagent|bridge|bridge-unit|bridge-sim|bridge-sim-unit|cyclonedds|episodes)
+    router|launchd|launchagent|bridge|bridge-unit|bridge-sim|bridge-sim-unit|bridge-perception|bridge-perception-unit|cyclonedds|episodes)
       fm_comms_render "$what" "$dest" ;;
     *) fm_err "unknown render target: $what"; usage; return 1 ;;
   esac

@@ -654,6 +654,17 @@ fm_comms_bridge_profile() {
     fm_err "  install it with: ./install.sh --role router"
     return 1
   fi
+  # bridge-perception.json5 sits beside the profiles and is not one: it carries
+  # no namespace, and only ever runs as a second bridge beside a host's own.
+  # Profile tokens name zenoh/bridge-<token>.json5, so the template's token is
+  # `perception`; the install role and render kind for it are
+  # `bridge-perception`, the same way `bridge-sim` renders the `sim` template.
+  # Only `sim` is also a card workload; `perception` never is.
+  if [ "$profile" = perception ]; then
+    fm_err "'perception' is not a host's bridge profile — it runs beside one"
+    fm_err "  install it with: ./install.sh --role bridge-perception"
+    return 1
+  fi
   if [ -z "$profile" ]; then
     fm_err "no bridge profile for this host"
     fm_err "  the card names one: fm machine init --workload <recorder|processor|robot|workstation|sim|cockpit>"
@@ -734,12 +745,33 @@ fm_comms_bridge_template() {
 # subscription read either, so the node name is the one thing that tells the two
 # apart in the ROS graph and in the bridge's own admin space. The host's bridge
 # keeps the name every other profile spells out literally.
+# A workstation that runs perception for a robot adds a third (bridge-perception),
+# under the same rule.
 fm_comms_bridge_nodename() {
-  if [ "$1" = bridge-sim ]; then
-    printf 'zenoh_bridge_%s_sim\n' "$FM_RIG_NAMESPACE"
-  else
-    printf 'zenoh_bridge_%s\n' "$FM_RIG_NAMESPACE"
+  case "$1" in
+    bridge-sim) printf 'zenoh_bridge_%s_sim\n' "$FM_RIG_NAMESPACE" ;;
+    bridge-perception) printf 'zenoh_bridge_%s_perception\n' "$FM_RIG_NAMESPACE" ;;
+    *) printf 'zenoh_bridge_%s\n' "$FM_RIG_NAMESPACE" ;;
+  esac
+}
+
+# The one robot a workstation's remote-perception bridge serves, as its prefix.
+#
+# Named at install as a machine name (FM_PERCEPTION_ROBOT=fm-rob-02) and derived
+# the way every namespace is, so it matches the key prefix that robot's own
+# bridge renders from its card. Required, and held to a machine name's shape:
+# the router authenticates no peer, so the rendered rules must name one robot
+# literally rather than every robot a pattern could match. fm-skills' `perception
+# fabric up <robot>` refuses a bridge pinned to another robot than the one it is
+# told.
+fm_comms_perception_robot_namespace() {
+  local machine="${FM_PERCEPTION_ROBOT:-}"
+  if ! printf '%s' "$machine" | grep -Eq '^fm-[a-z0-9]+(-[a-z0-9]+)*$'; then
+    fm_err "FM_PERCEPTION_ROBOT must name the robot this workstation runs perception for, e.g. fm-rob-02 (got '$machine')"
+    fm_err "  FM_PERCEPTION_ROBOT=fm-rob-02 ./install.sh --role bridge-perception"
+    return 1
   fi
+  fm_machine_namespace "$machine"
 }
 
 # fm_comms_render KIND [DEST] — render one of this host's config files.
@@ -767,21 +799,31 @@ fm_comms_render() {
       FM_ROUTER_LISTEN="$listen" \
         fm_render_template "$root/zenoh/router.json5" "$dest" FM_ROUTER_LISTEN
       ;;
-    bridge | bridge-sim)
+    bridge | bridge-sim | bridge-perception)
       # `bridge` is the host's own bridge, whose profile the card's workload
       # picks. `bridge-sim` is the second bridge a workstation runs beside it
       # while it hosts sim runs: always the sim profile, in the same namespace,
       # under its own node name (see fm_comms_bridge_nodename).
-      if [ "$kind" = bridge-sim ]; then
-        template="$root/zenoh/bridge-sim.json5"
-      else
-        template="$(fm_comms_bridge_template)" || return 1
-      fi
+      # `bridge-perception` is the one a workstation runs beside it while it
+      # runs perception for a robot: no namespace, under the robot's prefix.
+      case "$kind" in
+        bridge-sim) template="$root/zenoh/bridge-sim.json5" ;;
+        bridge-perception)
+          template="$root/zenoh/bridge-perception.json5"
+          FM_PERCEPTION_ROBOT_NAMESPACE="$(fm_comms_perception_robot_namespace)" || return 1
+          FM_BRIDGE_NODENAME="$(fm_comms_bridge_nodename "$kind")" \
+          FM_PERCEPTION_ROBOT_NAMESPACE="$FM_PERCEPTION_ROBOT_NAMESPACE" \
+            fm_render_template "$template" "$dest" \
+              FM_ROUTER_ENDPOINT FM_ROS_DOMAIN_ID FM_BRIDGE_NODENAME FM_PERCEPTION_ROBOT_NAMESPACE
+          return
+          ;;
+        *) template="$(fm_comms_bridge_template)" || return 1 ;;
+      esac
       FM_BRIDGE_NODENAME="$(fm_comms_bridge_nodename "$kind")" \
         fm_render_template "$template" "$dest" \
           FM_ROUTER_ENDPOINT FM_RIG_NAMESPACE FM_ROS_DOMAIN_ID FM_BRIDGE_NODENAME
       ;;
-    bridge-unit | bridge-sim-unit)
+    bridge-unit | bridge-sim-unit | bridge-perception-unit)
       # The unit carries two facts that are the host's, not the fleet's: which
       # ROS distro the graph it joins was built with, and whether that graph is
       # confined to loopback. Both were literals here while every bridge ran on a
@@ -799,16 +841,26 @@ fm_comms_render() {
       # profile, the same env file. Its distro has its own variable because
       # FM_ROS_DISTRO in fm-comms.env names the host's graph (humble on a
       # workstation), while the sim image is Jazzy whatever the host runs.
+      # The perception bridge is the sim bridge's sibling on the same terms:
+      # fm-skills' image is Jazzy whatever the host runs.
       local distro config description
-      if [ "$kind" = bridge-sim-unit ]; then
-        distro="${FM_SIM_ROS_DISTRO:-jazzy}"
-        config=bridge-sim.json5
-        description="First Motive Zenoh ROS 2 bridge for sim runs (zenoh-bridge-ros2dds)"
-      else
-        distro="${FM_ROS_DISTRO:-humble}"
-        config=bridge.json5
-        description="First Motive Zenoh ROS 2 bridge (zenoh-bridge-ros2dds)"
-      fi
+      case "$kind" in
+        bridge-sim-unit)
+          distro="${FM_SIM_ROS_DISTRO:-jazzy}"
+          config=bridge-sim.json5
+          description="First Motive Zenoh ROS 2 bridge for sim runs (zenoh-bridge-ros2dds)"
+          ;;
+        bridge-perception-unit)
+          distro="${FM_PERCEPTION_ROS_DISTRO:-jazzy}"
+          config=bridge-perception.json5
+          description="First Motive Zenoh ROS 2 bridge for remote perception (zenoh-bridge-ros2dds)"
+          ;;
+        *)
+          distro="${FM_ROS_DISTRO:-humble}"
+          config=bridge.json5
+          description="First Motive Zenoh ROS 2 bridge (zenoh-bridge-ros2dds)"
+          ;;
+      esac
       FM_ROS_DISTRO="$distro" \
       FM_LOCALHOST_ONLY_LINE="$localhost_line" \
       FM_BRIDGE_CONFIG_FILE="$config" \
@@ -866,7 +918,7 @@ fm_comms_render() {
           FM_COMMS_CHECKOUT FM_COMMS_USER FM_EPISODES_DIR
       ;;
     *)
-      fm_err "unknown render kind: $kind (use router | bridge | bridge-sim | bridge-unit | bridge-sim-unit | launchd | launchagent | cyclonedds | episodes)"
+      fm_err "unknown render kind: $kind (use router | bridge | bridge-sim | bridge-perception | bridge-unit | bridge-sim-unit | bridge-perception-unit | launchd | launchagent | cyclonedds | episodes)"
       return 1
       ;;
   esac

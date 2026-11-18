@@ -21,9 +21,13 @@ Three passes, in order of how early they catch a mistake:
    fleet depends on: the router binds exactly two non-wildcard endpoints (its LAN
    address and its tailnet address), every bridge is a client with multicast off,
    the recorder never publishes raw frames, the robot never accepts a trajectory
-   from off-rig, the anvil workcell and the axol robot accept nothing inbound
-   and publish only their contracts' topics, the axol's cameras capped just
-   above their driver rate, the sim host carries exactly the simulation
+   from off-rig, the anvil workcell accepts nothing inbound and publishes only
+   its contract's topics, the axol robot publishes only its contract's topics
+   and admits only perception's literal detection topics and debug lease, with
+   no motion, controller, joint command, or action name admitted by any rule,
+   the axol's cameras capped just above their driver rate, a workstation's
+   remote-perception bridge carries only the robot-prefixed perception and
+   sensing names, the sim host carries exactly the simulation
    contract's topic list with its cameras capped,
    a workstation's second (Jazzy) sim bridge holds that same contract in the
    workstation's namespace under a node name of its own, its unit differs from
@@ -91,19 +95,31 @@ CARDS = {
     "router": {"name": "fm-mac-01", "role": "mac", "workload": "router"},
 }
 
-# Every template on disk is a profile, so a new bridge-<profile>.json5 is graded
-# the day it lands; one with no fixture card above fails rather than going
-# unrendered.
+# Templates that only ever run as a second bridge beside a host's own, and so
+# are never a card's profile. Each is rendered and graded in main() through its
+# own render kind.
+SECOND_BRIDGE_TEMPLATES = ("perception",)
+
+# Every other template on disk is a profile, so a new bridge-<profile>.json5 is
+# graded the day it lands; one with no fixture card above fails rather than
+# going unrendered.
 BRIDGE_PROFILES = tuple(sorted(
-    path.name.removeprefix("bridge-").removesuffix(".json5")
-    for path in (ROOT / "zenoh").glob("bridge-*.json5")
+    name for name in (
+        path.name.removeprefix("bridge-").removesuffix(".json5")
+        for path in (ROOT / "zenoh").glob("bridge-*.json5"))
+    if name not in SECOND_BRIDGE_TEMPLATES
 ))
 
 # Profiles that accept no inbound topic at all. Each is driven through an
 # agent's queryables on the host, so a subscriber rule there is an unreviewed
 # command path into the controllers.
-NO_INBOUND_PROFILES = ("robot-anvil", "robot-axol", "sim")
+NO_INBOUND_PROFILES = ("robot-anvil", "sim")
 NO_INBOUND_KINDS = ("subscribers", "service_servers", "service_clients")
+
+# Profiles that carry no namespace and write every rule against a robot's or a
+# rig's prefixed name: the cockpit Mac, and a workstation's remote-perception
+# bridge.
+UNNAMESPACED_PROFILES = ("cockpit", "perception")
 
 FIXTURE_ENV = """FM_ROUTER_PORT=7447
 FM_ROUTER_ENDPOINT=tcp/fixture-router:7447
@@ -147,9 +163,10 @@ def card_json(profile: str, spec: dict[str, str]) -> str:
 
 
 def render(kind: str, profile: str, spec: dict[str, str], workdir: Path,
-           extra_env: str = "") -> str | None:
+           extra_env: str = "", shell_env: dict[str, str] | None = None) -> str | None:
     """Render one config through the repo's own render verb; `extra_env` is
-    appended to the fixture env file."""
+    appended to the fixture env file, and `shell_env` set in the render's own
+    environment, as an operator sets a value on the command line."""
     card = workdir / f"machine-{profile}.json"
     card.write_text(card_json(profile, spec))
     envfile = workdir / "fm-comms.env"
@@ -166,6 +183,8 @@ def render(kind: str, profile: str, spec: dict[str, str], workdir: Path,
         FM_ZENOH_BRIDGE_BIN="/opt/homebrew/bin/zenoh-bridge-ros2dds",
         FM_COMMS_USER="fm",
     )
+    env.pop("FM_PERCEPTION_ROBOT", None)
+    env.update(shell_env or {})
     # The banner goes to stdout, so the render is written to a file rather than
     # captured — the same path an install takes.
     out = workdir / f"{kind}-{profile}.rendered"
@@ -313,6 +332,20 @@ FORBIDDEN_TOPICS = {
         ("subscribers", "/fm_rec_01/head/color/image_raw"),
         ("subscribers", "/fm_rec_01/head/aligned_depth_to_color/image_raw"),
         ("subscribers", "/fm_rec_01/wrist/color/image_raw"),
+    ],
+    "perception": [
+        # Containment: the workstation's own detections and its sim runs'
+        # carry no robot prefix, and must stay on the workstation.
+        ("publishers", "/perception/chest/can"),
+        ("service_servers", "/perception/set_debug"),
+        # Raw frames are 20-50x the compressed bytes and the robot never sends one.
+        ("subscribers", "/fm_rob_02/cam_head/image_raw"),
+        ("subscribers", "/fm_rob_02/cam_head/depth_sensor"),
+        # Another robot's keys: the bridge serves the one robot it was installed for.
+        ("subscribers", "/fm_rob_03/cam_head/image_raw/compressed"),
+        ("subscribers", "/fm_rob_03/tf"),
+        ("publishers", "/fm_rob_03/perception/chest/can"),
+        ("service_servers", "/fm_rob_03/perception/set_debug"),
     ],
 }
 
@@ -465,8 +498,9 @@ ANVIL_PATTERN_RULES = (
 
 
 # The Axol's topic list, the one bridge-robot-axol.json5 states: state and
-# sensing out, nothing else. Every rule must be one of these names spelled
-# literally, with no pattern rule at all, so a new camera is an edit here.
+# sensing out, perception's detections and its debug lease in, nothing else.
+# Every rule of every kind must be one of these names spelled literally, with no
+# pattern rule at all, so a new camera or a new class is an edit here.
 AXOL_CONTRACT = {
     "publishers": [
         "/joint_states",
@@ -482,7 +516,104 @@ AXOL_CONTRACT = {
         "/cam_wrist_right/image_raw/compressed",
         "/cam_wrist_right/camera_info",
     ],
+    # The detections fm-skills perception publishes for every class of its
+    # packs, which fm-skills-perception on a workstation sends back and the
+    # task and pick skill on the robot subscribe to.
+    "subscribers": [
+        "/perception/chest",
+        "/perception/chest/can",
+        "/perception/chest/block",
+        "/perception/chest/puck",
+        "/perception/chest/paper",
+        "/perception/wrist/can",
+        "/perception/wrist/block",
+        "/perception/wrist/puck",
+        "/perception/wrist/paper",
+    ],
+    # The debug lease: fm-robot-agent on the robot calls it, the workstation's
+    # node serves it.
+    "service_clients": [
+        "/perception/set_debug",
+    ],
 }
+
+# Names no rule of any kind on the Axol's bridge may admit: everything that
+# moves the robot or arms a controller. fm-skills' motion topics and its
+# segment action, the shim's command topic into the core, the forward position
+# controllers, the trajectory controllers and their actions, the controller
+# switch, the task and skill actions that end in motion, and the teleop
+# topics another profile accepts. Beside them, the perception neighbours a rule
+# written a little too wide would admit: a class no pack has, and debug frames
+# that would flow the wrong way. Graded against every rule kind, so moving a
+# command into `service_clients` or an action kind fails as surely as a
+# subscriber does.
+AXOL_NEVER_ADMITTED = [
+    "/motion/gripper",
+    "/motion/ee_target",
+    "/motion/use_controller",
+    "/motion/set_scene",
+    "/motion/computed_plans",
+    "/motion/move_segments",
+    "/motion/move_segments/_action/send_goal",
+    "/axol/joint_commands",
+    "/axol_left_forward_position_controller/commands",
+    "/axol_right_forward_position_controller/commands",
+    "/axol_left_jtc/joint_trajectory",
+    "/axol_right_jtc/joint_trajectory",
+    "/axol_left_jtc/follow_joint_trajectory",
+    "/axol_left_jtc/_action/send_goal",
+    "/axol_right_jtc/_action/send_goal",
+    "/controller_manager/switch_controller",
+    "/joint_trajectory_controller/joint_trajectory",
+    "/task/pick_place",
+    "/task/pick_place/_action/send_goal",
+    "/skills/pick/classical",
+    "/skills/pick/classical/_action/send_goal",
+    "/skills/place/classical",
+    "/skills/pick/learned",
+    "/commanded_ee_right",
+    "/servo_node/delta_twist_cmds",
+    "/servo_node/delta_joint_cmds",
+    "/target_pose",
+    "/cmd_vel",
+    "/perception/wrist/arm",
+    "/perception/chest/arm",
+    "/perception/debug/chest",
+]
+
+
+def check_never_admitted(where: str, allow: dict, names: list[str]) -> None:
+    for kind, rules in allow.items():
+        for pattern in rules:
+            for topic in names:
+                if matches(pattern, topic):
+                    fail(where, f"{kind[:-1]} rule {pattern!r} admits {topic!r}, which moves the robot or is outside the contract")
+
+
+# A workstation's remote-perception bridge, bridge-perception.json5: the same
+# names as the Axol's contract seen from the other side, every one under the
+# robot's prefix. Its publishers are the Axol's perception subscribers plus the
+# debug frames, its subscribers the frame tree and the two cameras perception
+# reads, its one service server the debug lease. Every rule must be the one
+# robot's prefix below followed by one of these names, both spelled literally:
+# the router authenticates no peer, so a pattern over every robot's prefix
+# (`/fm_[a-z0-9_]+`) would take inputs from, and send detections to, any robot
+# name a peer chose.
+PERCEPTION_ROBOT = "fm-rob-02"
+PERCEPTION_BRIDGE_PREFIX = "/fm_rob_02"
+PERCEPTION_BRIDGE_CONTRACT = {
+    "publishers": AXOL_CONTRACT["subscribers"] + ["/perception/debug/chest", "/perception/debug/wrist"],
+    "subscribers": [
+        "/tf",
+        "/tf_static",
+        "/cam_head/image_raw/compressed",
+        "/cam_wrist_right/image_raw/compressed",
+        "/cam_head/camera_info",
+    ],
+    "service_servers": AXOL_CONTRACT["service_clients"],
+}
+# The robot the probes stand for, as its bridge prefixes its keys.
+PERCEPTION_PROBE_ROBOT = PERCEPTION_BRIDGE_PREFIX
 
 # Every camera topic the Axol publishes, and the rate it may cross at. The
 # cameras run at 15 Hz; the cap leaves headroom above that for the reason
@@ -535,6 +666,8 @@ REQUIRED_TOPICS = {
     "robot-axol": [(kind, topic) for kind, topics in AXOL_CONTRACT.items() for topic in topics],
     "sim": [(kind, topic) for kind, topics in SIM_CONTRACT.items() for topic in topics],
     "cockpit": [("subscribers", "/fm_ws_01/joint_states")],
+    "perception": [(kind, PERCEPTION_PROBE_ROBOT + topic)
+                   for kind, topics in PERCEPTION_BRIDGE_CONTRACT.items() for topic in topics],
 }
 
 
@@ -580,10 +713,13 @@ def max_frequency(caps: list[tuple[str, float]], topic: str) -> float | None:
     return min(hits) if hits else None
 
 
-def check_contract_rules(where: str, allow: dict, contract: dict, pattern_rules: tuple) -> None:
+def check_contract_rules(where: str, allow: dict, contract: dict, pattern_rules: tuple,
+                         prefix: str = "") -> None:
     """Hold every rule to a contract's literal names and its fixed patterns.
 
-    The other direction, that every contract name is admitted, is graded
+    `prefix` is a regex every rule must open with, string for string, before
+    the literal name: the robot's prefix on a bridge with no namespace of its
+    own. The other direction, that every contract name is admitted, is graded
     through REQUIRED_TOPICS.
     """
     extra_kinds = set(allow) - set(contract)
@@ -592,11 +728,14 @@ def check_contract_rules(where: str, allow: dict, contract: dict, pattern_rules:
     # Exact, not sampled: a rule is either one contract topic spelled literally,
     # or one of the fixed patterns, string for string. A wildcard that happens
     # to dodge every forbidden-name probe still fails here.
-    for pattern in allow.get("publishers", []):
-        body = pattern[1:-1] if pattern.startswith("^") and pattern.endswith("$") else None
-        is_literal = body is not None and re.escape(body) == body and body in contract["publishers"]
-        if not is_literal and pattern not in pattern_rules:
-            fail(where, f"publisher rule {pattern!r} is neither a literal contract topic nor a fixed pattern")
+    for kind, rules in allow.items():
+        for pattern in rules:
+            body = pattern[1:-1] if pattern.startswith("^") and pattern.endswith("$") else None
+            if body is not None and prefix:
+                body = body.removeprefix(prefix) if body.startswith(prefix) else None
+            is_literal = body is not None and re.escape(body) == body and body in contract.get(kind, [])
+            if not is_literal and pattern not in pattern_rules:
+                fail(where, f"{kind[:-1]} rule {pattern!r} is neither a literal contract topic nor a fixed pattern")
 
 
 def check_sim_contract(where: str, caps: list[tuple[str, float]], allow: dict) -> None:
@@ -643,18 +782,20 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
     # so a namespace there would nest them a second time under the Mac's name and
     # nothing would line up. Graded either way — an accidental namespace on the
     # cockpit is as broken as a missing one on a rig.
+    # The remote-perception bridge is the cockpit's case again: it reads and
+    # writes the robot's prefixed keys, so it carries no namespace either.
     namespace = ros2dds.get("namespace", "")
-    if profile == "cockpit":
+    if profile in UNNAMESPACED_PROFILES:
         if namespace not in ("", "/"):
-            fail(where, f"the cockpit bridge must carry no namespace, not {namespace!r}")
+            fail(where, f"the {profile} bridge must carry no namespace, not {namespace!r}")
     elif not namespace.startswith("/fm_"):
         fail(where, f"namespace {namespace!r} was not derived from the card's name")
 
     # Every cockpit rule is written against a topic the fleet already prefixed.
     # An unprefixed one would match the Mac's own local topics as well, which is
     # how a sim running on the laptop ends up on the fabric.
-    if profile == "cockpit":
-        for kind in ("publishers", "subscribers"):
+    if profile in UNNAMESPACED_PROFILES:
+        for kind in ("publishers", "subscribers", "service_servers", "service_clients"):
             for pattern in allow.get(kind, []):
                 if not pattern.startswith("^/fm_"):
                     fail(where, f"{kind[:-1]} rule is not scoped to a rig prefix: {pattern!r}")
@@ -682,8 +823,23 @@ def check_bridge(profile: str, config: dict, where: str | None = None) -> None:
         check_contract_rules(where, allow, ANVIL_CONTRACT, ANVIL_PATTERN_RULES)
     if profile == "robot-axol":
         check_contract_rules(where, allow, AXOL_CONTRACT, ())
+        check_never_admitted(where, allow, AXOL_NEVER_ADMITTED)
         check_axol_cameras(where, caps)
+    if profile == "perception":
+        check_contract_rules(where, allow, PERCEPTION_BRIDGE_CONTRACT, (), prefix=PERCEPTION_BRIDGE_PREFIX)
+        check_never_admitted(where, allow, [PERCEPTION_PROBE_ROBOT + name for name in AXOL_NEVER_ADMITTED
+                                            if not name.startswith("/perception/debug/")])
+        for topic in DEBUG_FRAME_TOPICS:
+            cap = max_frequency(caps, PERCEPTION_PROBE_ROBOT + topic)
+            if cap is None or cap > DEBUG_FRAME_MAX_HZ:
+                fail(where, f"debug frame topic {PERCEPTION_PROBE_ROBOT + topic!r} is capped at {cap} Hz, "
+                            f"not at most {DEBUG_FRAME_MAX_HZ}")
+        for topic in ALL_CLASS_TOPICS:
+            if max_frequency(caps, PERCEPTION_PROBE_ROBOT + topic) is not None:
+                fail(where, f"all-class topic {PERCEPTION_PROBE_ROBOT + topic!r} is capped, not uncapped")
 
+    # Unprefixed names, so inert on the unnamespaced profiles; perception's
+    # prefixed debug frames are graded in its own branch above.
     for topic in DEBUG_FRAME_TOPICS:
         if any(matches(pattern, topic) for pattern in allow.get("publishers", [])):
             cap = max_frequency(caps, topic)
@@ -819,18 +975,43 @@ ANVIL_MUTATIONS = (
 # Ways the axol profile could drift, each applied to the real rendered config.
 # The command paths are the ones most likely to be added "just for teleop".
 AXOL_MUTATIONS = (
-    ("a subscriber rule",
-     lambda c: _ros2dds(c)["allow"].update(subscribers=["^/axol/joint_commands$"]),
-     "accepts no inbound"),
+    ("a joint command subscriber",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/axol/joint_commands$"),
+     "admits '/axol/joint_commands'"),
+    ("a motion subscriber",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/motion/ee_target$"),
+     "admits '/motion/ee_target'"),
+    ("a /perception wildcard subscriber",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/perception/.*$"),
+     "neither a literal contract topic"),
+    ("a subscriber wildcard that admits motion",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/.*$"),
+     "admits '/motion/gripper'"),
+    ("a forward controller subscriber",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append(
+         "^/axol_right_forward_position_controller/commands$"),
+     "admits '/axol_right_forward_position_controller/commands'"),
     ("a controller switch service rule",
      lambda c: _ros2dds(c)["allow"].update(service_servers=["^/controller_manager/switch_controller$"]),
-     "accepts no inbound"),
-    ("a service client rule",
-     lambda c: _ros2dds(c)["allow"].update(service_clients=["^/controller_manager/.*$"]),
-     "accepts no inbound"),
+     "rule kinds outside the contract"),
+    ("a debug lease served here",
+     lambda c: _ros2dds(c)["allow"].update(service_servers=["^/perception/set_debug$"]),
+     "rule kinds outside the contract"),
+    ("a service client wildcard",
+     lambda c: _ros2dds(c)["allow"]["service_clients"].append("^/controller_manager/.*$"),
+     "admits '/controller_manager/switch_controller'"),
     ("an action server rule",
      lambda c: _ros2dds(c)["allow"].update(action_servers=["^/axol_left_jtc/follow_joint_trajectory$"]),
      "rule kinds outside the contract"),
+    ("an action client rule",
+     lambda c: _ros2dds(c)["allow"].update(action_clients=["^/motion/move_segments$"]),
+     "rule kinds outside the contract"),
+    ("a deleted detection topic",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].remove("^/perception/chest/can$"),
+     "carries no subscriber rule for '/perception/chest/can'"),
+    ("a deleted debug lease client",
+     lambda c: _ros2dds(c)["allow"].pop("service_clients"),
+     "carries no service_client rule for '/perception/set_debug'"),
     ("a camera pattern",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_[a-z0-9_]+/image_raw/compressed$"),
      "neither a literal contract topic"),
@@ -858,6 +1039,54 @@ AXOL_MUTATIONS = (
     ("robot-side depth, which the Axol no longer sends",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_head/depth_sensor/compressed$"),
      "neither a literal contract topic"),
+)
+
+
+# Ways a workstation's remote-perception bridge could drift, each applied to the
+# real rendered config.
+PERCEPTION_MUTATIONS = (
+    ("a namespace",
+     lambda c: _ros2dds(c).update(namespace="/fm_ws_01"),
+     "must carry no namespace"),
+    ("an unprefixed detection rule",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/perception/chest/can$"),
+     "not scoped to a rig prefix"),
+    ("a motion publisher",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/fm_rob_02/motion/ee_target$"),
+     "admits '/fm_rob_02/motion/ee_target'"),
+    ("a wildcard tail",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/fm_rob_02/perception/.*$"),
+     "neither a literal contract topic"),
+    ("a widened prefix",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/fm_.*/perception/chest/can$"),
+     "neither a literal contract topic"),
+    ("a wildcard robot prefix",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/fm_[a-z0-9_]+/cam_head/image_raw/compressed$"),
+     "neither a literal contract topic"),
+    ("another robot's prefix",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/fm_rob_03/perception/chest/can$"),
+     "neither a literal contract topic"),
+    ("a near-miss prefix",
+     lambda c: _ros2dds(c)["allow"]["publishers"].append("^/fm_rob_022/perception/chest/can$"),
+     "neither a literal contract topic"),
+    ("a raw camera subscriber",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].append("^/fm_rob_02/cam_head/image_raw$"),
+     "neither a literal contract topic"),
+    ("a service client rule",
+     lambda c: _ros2dds(c)["allow"].update(service_clients=["^/fm_rob_02/controller_manager/switch_controller$"]),
+     "rule kinds outside the contract"),
+    ("an action client rule",
+     lambda c: _ros2dds(c)["allow"].update(action_clients=["^/fm_rob_02/task/pick_place$"]),
+     "rule kinds outside the contract"),
+    ("an uncapped debug frame",
+     lambda c: _ros2dds(c).update(pub_max_frequencies=[]),
+     "not at most 5.0"),
+    ("a cap on the all-class chest topic",
+     lambda c: _ros2dds(c)["pub_max_frequencies"].append("/fm_rob_02/perception/chest=10"),
+     "not uncapped"),
+    ("a deleted camera",
+     lambda c: _ros2dds(c)["allow"]["subscribers"].remove("^/fm_rob_02/cam_head/image_raw/compressed$"),
+     "carries no subscriber rule for '/fm_rob_02/cam_head/image_raw/compressed'"),
 )
 
 
@@ -923,6 +1152,21 @@ def check_robot_kinds(workdir: Path) -> None:
         got = result.stdout.strip() if result.returncode == 0 else None
         if got != want:
             fail("bridge profile", f"role {role!r} with robot kind {kind!r} selected {got!r}, want {want!r}")
+    # A template beside the profiles is not one: a card naming it as a workload
+    # would run it as the host's only bridge, with no namespace.
+    for workload in SECOND_BRIDGE_TEMPLATES:
+        card = {"schema_version": 1, "name": "fm-ws-09", "role": "workstation", "fleet": "prod",
+                "transport": "zenoh", "workload": workload, "workspace": "/home/fm/fm"}
+        path = workdir / "machine-kind.json"
+        path.write_text(json.dumps(card))
+        env = {k: v for k, v in os.environ.items() if k != "FM_BRIDGE_PROFILE"}
+        env["FM_MACHINE_FILE"] = str(path)
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1/lib.sh" && fm_comms_bridge_profile', "_", str(ROOT)],
+            env=env, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            fail("bridge profile", f"workload {workload!r} selected {result.stdout.strip()!r}; it is no host's profile")
 
 
 def check_mutations(name: str, config, mutations: tuple, check) -> None:
@@ -980,11 +1224,12 @@ def unit_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
 
 
-def check_units(main: str, sim: str) -> None:
-    """The sim unit is the workstation's, with its distro, config, and name changed."""
+def check_units(main: str, sim: str, perception: str) -> None:
+    """Each second unit is the workstation's, with its distro, config, and name changed."""
     for where, text, distro, config in (
         ("fm-zenoh-bridge.service", main, "humble", "/etc/fm-comms/bridge.json5"),
         ("fm-zenoh-bridge-sim.service", sim, "jazzy", "/etc/fm-comms/bridge-sim.json5"),
+        ("fm-zenoh-bridge-perception.service", perception, "jazzy", "/etc/fm-comms/bridge-perception.json5"),
     ):
         lines = unit_lines(text)
         if "${FM_" in text:
@@ -994,10 +1239,12 @@ def check_units(main: str, sim: str) -> None:
         if not any(line.startswith("ExecStart=") and line.endswith(f"--config {config}") for line in lines):
             fail(where, f"does not start the bridge on {config}")
     shared = [[line for line in unit_lines(text) if not line.startswith(UNIT_VARIANT_KEYS)]
-              for text in (main, sim)]
-    if shared[0] != shared[1]:
-        fail("fm-zenoh-bridge-sim.service", "differs from fm-zenoh-bridge.service beyond its "
-             f"distro, config, and description: {sorted(set(shared[0]) ^ set(shared[1]))}")
+              for text in (main, sim, perception)]
+    for where, lines in (("fm-zenoh-bridge-sim.service", shared[1]),
+                         ("fm-zenoh-bridge-perception.service", shared[2])):
+        if lines != shared[0]:
+            fail(where, "differs from fm-zenoh-bridge.service beyond its "
+                 f"distro, config, and description: {sorted(set(shared[0]) ^ set(lines))}")
 
 
 UNIT_MUTATIONS = (
@@ -1010,6 +1257,12 @@ UNIT_MUTATIONS = (
     ("a sim unit off loopback",
      lambda units: units.__setitem__(1, units[1].replace("Environment=ROS_LOCALHOST_ONLY=1\n", "")),
      "beyond its distro"),
+    ("a perception unit left on humble",
+     lambda units: units.__setitem__(2, units[2].replace("ROS_DISTRO=jazzy", "ROS_DISTRO=humble")),
+     "fm-zenoh-bridge-perception.service: does not run with ROS_DISTRO=jazzy"),
+    ("a perception unit off loopback",
+     lambda units: units.__setitem__(2, units[2].replace("Environment=ROS_LOCALHOST_ONLY=1\n", "")),
+     "fm-zenoh-bridge-perception.service: differs"),
 )
 
 
@@ -1114,7 +1367,32 @@ def main() -> int:
         else:
             fail("bridge-sim.json5 (workstation)", "did not render beside the workstation's own bridge")
 
-        units = [render(kind, "workstation", card, workdir) for kind in ("bridge-unit", "bridge-sim-unit")]
+        # The remote-perception bridge a workstation adds while it runs
+        # perception for a robot: rendered from the workstation's own card,
+        # held to its contract, and under a node name of its own.
+        if render("bridge-perception", "workstation", card, workdir) is not None:
+            fail("bridge-perception.json5", "rendered with no FM_PERCEPTION_ROBOT; it must name one robot")
+        # The refusal above is a recorded failure of its own; it is the expected one.
+        failures[:] = [f for f in failures if not (f.startswith("render bridge-perception") and "FM_PERCEPTION_ROBOT" in f)]
+        rendered = render("bridge-perception", "workstation", card, workdir,
+                          shell_env={"FM_PERCEPTION_ROBOT": PERCEPTION_ROBOT})
+        perception = None
+        if rendered is not None:
+            try:
+                perception = json5.loads(rendered)
+            except ValueError as exc:
+                fail("bridge-perception.json5", f"rendered output is not valid JSON5: {exc}")
+        if perception is not None:
+            check_bridge("perception", perception)
+            check_mutations("perception", perception, PERCEPTION_MUTATIONS, lambda c: check_bridge("perception", c))
+            want = "zenoh_bridge_fm_ws_01_perception"
+            if _ros2dds(perception).get("nodename") != want:
+                fail("bridge-perception.json5", f"nodename {_ros2dds(perception).get('nodename')!r}, want {want!r}")
+        else:
+            fail("bridge-perception.json5", "did not render on the workstation")
+
+        units = [render(kind, "workstation", card, workdir, shell_env={"FM_PERCEPTION_ROBOT": PERCEPTION_ROBOT})
+                 for kind in ("bridge-unit", "bridge-sim-unit", "bridge-perception-unit")]
         if None not in units:
             check_units(*units)
             check_mutations("units", units, UNIT_MUTATIONS, lambda u: check_units(*u))
