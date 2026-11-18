@@ -4,8 +4,9 @@
 /// Like the anvil profile, this is the robot profile with the commands taken
 /// out. The desktop drives an Axol through `fm/robot/<ns>/*` queryables served
 /// by fm-robot-agent, which reaches the robot on the host; nothing off-host
-/// publishes to it. So the bridge carries state and sensing outward and accepts
-/// nothing inward.
+/// commands it. So the bridge carries state and sensing outward, and takes one
+/// thing back: perception's results, from fm-skills-perception running on a
+/// workstation (bridge-perception.json5) rather than on the robot's CPU.
 ///
 /// `/joint_states` lands on `<ns>/joint_states`, the key fm-robot-agent
 /// publishes the Axol's telemetry on when the ROS graph is down: the agent
@@ -54,12 +55,14 @@
       /// refused at startup as "unknown field `deny`" — which reads as a typo
       /// and is not one.
       ///
-      /// The rule enforced by absence is the anvil's: there is no `subscribers`
-      /// list, and no service or action list, so no key on the fabric can reach
-      /// a DDS writer here. `/axol/joint_commands`, the forward position
-      /// controllers, and the trajectory controllers all move the arms, and
-      /// scripts/ci/check-transport.py tests each name against these rules on
-      /// every pull request.
+      /// The one inbound set is perception's, and every rule in it is one
+      /// detection topic spelled literally. No pattern, because a pattern is
+      /// how a rule written for detections admits a neighbour: `/motion/*`,
+      /// `/axol/joint_commands`, the forward position controllers, and the
+      /// trajectory controllers and their actions all move the arms. There is
+      /// no service server or action rule at all, and
+      /// scripts/ci/check-transport.py tests each of those names against every
+      /// rule here on every pull request.
       ///
       /// Every rule is one topic spelled literally, so a new camera or a new
       /// topic is a decision made here. `/tf_static` and `/robot_description`
@@ -89,6 +92,31 @@
           "^/cam_wrist_left/camera_info$",
           "^/cam_wrist_right/image_raw/compressed$",
           "^/cam_wrist_right/camera_info$",
+        ],
+        /// Perception's detections, published by fm-skills-perception on a
+        /// workstation from the cameras above and read here by the task and
+        /// the pick skill. These are the names fm-skills perception publishes
+        /// for every class of its packs (can, block, puck, paper), and the
+        /// names the skills on this robot subscribe to. A detection carries
+        /// its source image's stamp, so a freshness check here reads the
+        /// robot's own clock whichever host ran the model.
+        subscribers: [
+          "^/perception/chest$",
+          "^/perception/chest/can$",
+          "^/perception/chest/block$",
+          "^/perception/chest/puck$",
+          "^/perception/chest/paper$",
+          "^/perception/wrist/can$",
+          "^/perception/wrist/block$",
+          "^/perception/wrist/puck$",
+          "^/perception/wrist/paper$",
+        ],
+        /// The debug lease, called from this robot (fm-robot-agent renews it)
+        /// and served by the workstation's perception node. A client rule
+        /// routes this host's calls out; no server rule exists, so nothing on
+        /// the fabric can call a service here.
+        service_clients: [
+          "^/perception/set_debug$",
         ],
       },
 

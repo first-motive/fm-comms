@@ -52,7 +52,11 @@ scripts that place the binaries. Part of First Motive's ROS2 stack, vendored int
   under `ROS_DISTRO=jazzy`, in the same namespace, under node name
   `zenoh_bridge_<ns>_sim`. A bridge sees only nodes of its own distro, so sim
   topics never go on the workstation's own profile. On a Mac the Jazzy bridge
-  is fm-sim's per-run container, not a second service.
+  is fm-sim's per-run container, not a second service. A workstation that runs
+  perception for a robot adds `--role bridge-perception`, the one second Jazzy
+  bridge: no namespace, every rule under ONE robot's literal `/fm_<ns>/` prefix
+  (`FM_PERCEPTION_ROBOT`, required), which no sim rule can match, so the two never route one topic. Node name
+  `zenoh_bridge_<ns>_perception`; its template is no card's profile.
 - **No real endpoints in git.** Committed configs carry `${FM_...}` placeholders
   only; the installer writes the host's actual values to `/etc/fm-comms.env`,
   which is never committed. A hostname or tailnet IP in a tracked file is a bug.

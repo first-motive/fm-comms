@@ -1,0 +1,121 @@
+/// zenoh-bridge-ros2dds for REMOTE PERCEPTION — a workstation that runs
+/// fm-skills-perception for a robot elsewhere on the fabric, so YOLO inference
+/// runs on the workstation's GPU tower rather than the robot's CPU.
+///
+/// It is a second bridge beside the host's own, like bridge-sim.json5, and for
+/// a reason of its own: the namespace. A host's bridge nests everything under
+/// the host's name, so on fm-ws-01 a local topic /x is the key fm_ws_01/x. The
+/// robot's cameras are the keys fm_rob_02/cam_head/..., and its perception
+/// subscribers wait on fm_rob_02/perception/... — neither under fm_ws_01. So
+/// this bridge carries NO NAMESPACE, as the cockpit's does, and the perception
+/// node runs under the robot's: fm-skills' `robot_namespace:=fm_rob_02` puts
+/// every input and output it has under /fm_rob_02, and the default root
+/// namespace maps /fm_rob_02/x to the key fm_rob_02/x and back.
+///
+/// Every rule is therefore written against the PREFIXED topic name, and against
+/// ONE robot's prefix, spelled literally: the robot this workstation runs
+/// perception for, named at install. The router does not authenticate its peers,
+/// so a rule open over every robot's prefix would take frames and TF from any
+/// peer that published under some robot's name, and send detections to any robot
+/// whose bridge admits them. The prefix is also the containment: the
+/// workstation's own nodes and its sim runs publish unprefixed topics, which no
+/// rule below can match.
+///
+/// It runs Jazzy (fm-zenoh-bridge-perception.service, ROS_DISTRO=jazzy),
+/// because the fm-skills image is Jazzy and a bridge discovers only nodes of
+/// its own distro (see bridge-sim.json5), and it joins the same loopback DDS
+/// through the same cyclonedds.xml as the host's other bridges.
+///
+/// What crosses, and which way. `publishers` and `subscribers` are read from
+/// the local DDS side, as on every profile:
+///
+///   in   the robot's frame tree and the two cameras perception reads (the
+///        Axol's head and right wrist, compressed), exactly as
+///        bridge-robot-axol.json5 exports them
+///   out  perception's detections and debug frames, under the robot's prefix,
+///        which bridge-robot-axol.json5 admits by the same literal names
+///   out  the debug lease service, served here for the robot's client
+///
+/// Nothing here can carry a command to an arm: every rule ends in a literal
+/// perception or sensing name, and scripts/ci/check-transport.py tests the
+/// motion and controller topics against each rule on every pull request.
+///
+/// This file is a TEMPLATE.
+/// `FM_PERCEPTION_ROBOT=fm-rob-02 ./install.sh --role bridge-perception` renders
+/// it and writes the result to /etc/fm-comms/bridge-perception.json5. Committed
+/// files carry placeholders only — never a real address. Read the render before
+/// installing it:
+///
+///     FM_PERCEPTION_ROBOT=fm-rob-02 ./run.sh render bridge-perception
+///
+/// Placeholders:
+///   FM_ROUTER_ENDPOINT    the router, e.g. tcp/<rune>:7447. Fleet-wide, from
+///                         /etc/fm-comms.env.
+///   FM_ROS_DOMAIN_ID      the DDS domain this machine's nodes run on. Fleet-wide,
+///                         from /etc/fm-comms.env.
+///   FM_PERCEPTION_ROBOT_NAMESPACE
+///                         the one robot's prefix, derived from FM_PERCEPTION_ROBOT
+///                         (a machine name, fm-rob-02 becomes fm_rob_02) the
+///                         way every namespace is. Set by the render; required.
+///   FM_BRIDGE_NODENAME    zenoh_bridge_<namespace>_perception, beside the
+///                         host's own bridge. Set by the render.
+{
+  mode: "client",
+  connect: {
+    endpoints: ["${FM_ROUTER_ENDPOINT}"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+
+  plugins: {
+    ros2dds: {
+      nodename: "${FM_BRIDGE_NODENAME}",
+      domain: ${FM_ROS_DOMAIN_ID},
+
+      /// Allowlist, and ONLY an allowlist. zenoh-plugin-ros2dds flattens allow
+      /// and deny into a single untagged choice, so a config carrying both is
+      /// refused at startup as "unknown field `deny`" — which reads as a typo
+      /// and is not one. Every rule is anchored and literal, the robot's prefix
+      /// included.
+      allow: {
+        publishers: [
+          /// Detections, by the names the robot's skills subscribe to.
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/chest$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/chest/can$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/chest/block$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/chest/puck$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/chest/paper$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/wrist/can$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/wrist/block$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/wrist/puck$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/wrist/paper$",
+          /// Debug frames, for the desktop, only while a lease holds them on.
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/debug/chest$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/debug/wrist$",
+        ],
+        subscribers: [
+          /// Where the chest camera is, which places a detection on the table.
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/tf$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/tf_static$",
+          /// The two cameras perception reads, compressed.
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_head/image_raw/compressed$",
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_wrist_right/image_raw/compressed$",
+        ],
+        service_servers: [
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/set_debug$",
+        ],
+      },
+
+      /// Debug frames carry a camera JPEG and every candidate's mask, so they
+      /// cross at most at the node's own throttle (`debug_rate_hz`, 5). The
+      /// detections are a few hundred bytes and stay uncapped: a cap on the
+      /// all-class chest topic drops whole classes.
+      pub_max_frequencies: [
+        "/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/debug/(chest|wrist)=5",
+      ],
+
+      reliable_routes_blocking: false,
+    },
+  },
+}

@@ -137,6 +137,23 @@ run_sim_installer() {
     "$ROOT/scripts/install-bridge-sim.sh" "$action" 2>&1 || true
 }
 
+# The remote-perception bridge's installer, the same way.
+run_perception_installer() {
+  local uname_s="$1" action="$2" robot="${3-fm-rob-02}"
+  FM_PERCEPTION_ROBOT="$robot" \
+  PATH="$WORKDIR/bin:$PATH" \
+  FM_TEST_UNAME_S="$uname_s" \
+  FM_DRY_RUN=1 \
+  FM_YES=1 \
+  FM_MACHINE_FILE="$WORKDIR/machine.json" \
+  FM_COMMS_ENV_FILE="$WORKDIR/fm-comms.env" \
+  FM_COMMS_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_LOG_DIR="$WORKDIR/log" \
+  FM_BRIDGE_PROFILE=workstation \
+    "$ROOT/scripts/install-bridge-perception.sh" "$action" 2>&1 || true
+}
+
 check() {
   local what="$1" haystack="$2" needle="$3"
   if printf '%s' "$haystack" | grep -qF -- "$needle"; then
@@ -296,6 +313,37 @@ main() {
     "rm -f /etc/systemd/system/fm-zenoh-bridge.service"
   check_absent "sim: uninstall leaves the workstation's config" "$out" \
     "$WORKDIR/etc/bridge.json5"
+
+  # The remote-perception bridge: its own unit, on jazzy, its own config, no
+  # namespace, a node name of its own, and the workstation's bridge left alone.
+  out="$(run_perception_installer Linux install)"
+  check "perception: a new config restarts its own unit" "$out" \
+    "config changed — restarting fm-zenoh-bridge-perception.service"
+  check "perception: the unit runs jazzy" "$out" "Environment=ROS_DISTRO=jazzy"
+  check "perception: the unit reads its own config" "$out" \
+    "--config /etc/fm-comms/bridge-perception.json5"
+  check "perception: the config takes a node name of its own" "$out" \
+    'nodename: "zenoh_bridge_fm_ws_01_perception"'
+  check "perception: the rules name the one robot it serves" "$out" \
+    '"^/fm_rob_02/cam_head/image_raw/compressed$"'
+  check_absent "perception: no rule is open over every robot" "$out" 'fm_[a-z0-9_]+'
+  check_absent "perception: the config carries no namespace" "$out" 'namespace: "/fm_ws_01"'
+  check_absent "perception: the workstation's bridge is not restarted" "$out" \
+    "systemctl restart fm-zenoh-bridge.service"
+
+  out="$(run_perception_installer Linux install "")"
+  check "perception: refused without the robot it serves" "$out" "FM_PERCEPTION_ROBOT must name"
+  check_absent "perception: nothing is installed without the robot" "$out" "would run: sudo systemctl"
+
+  out="$(run_perception_installer Darwin install)"
+  check "perception: refused on a Mac" "$out" "runs on a Linux workstation"
+  check_absent "perception: nothing is installed on a Mac" "$out" "would run:"
+
+  out="$(run_perception_installer Linux uninstall)"
+  check "perception: uninstall disables its own unit" "$out" \
+    "would run: sudo systemctl disable --now fm-zenoh-bridge-perception.service"
+  check_absent "perception: uninstall leaves the workstation's unit running" "$out" \
+    "disable --now fm-zenoh-bridge.service"
 
   if [ "$FAILURES" -gt 0 ]; then
     fm_err "$FAILURES check(s) failed — a reinstall would leave the old config running"

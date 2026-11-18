@@ -25,7 +25,8 @@ Type=simple
 # whatever the vendor ships — the Anvil workcell runs Jazzy — so this is a
 # per-host fact, and FM_ROS_DISTRO in fm-comms.env is where it is recorded.
 # The sim bridge takes FM_SIM_ROS_DISTRO instead (jazzy unless set), because the
-# sim image is Jazzy whatever the host's own graph runs.
+# sim image is Jazzy whatever the host's own graph runs, and the perception bridge
+# FM_PERCEPTION_ROS_DISTRO, for the same reason about the fm-skills image.
 Environment=ROS_DISTRO=${FM_ROS_DISTRO}
 # The zenoh profile confines the rig's DDS to loopback; the bridge must sit on
 # the same island with the same Cyclone profile — unicast localhost discovery

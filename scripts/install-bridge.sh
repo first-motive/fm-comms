@@ -37,10 +37,15 @@
 # bridge-sim.json5 and cyclonedds.xml into the user config dir and installs no
 # LaunchAgent: fm-sim's agent runs that bridge in a container beside each run.
 #
+# FM_BRIDGE_VARIANT=perception (`./install.sh --role bridge-perception`) installs
+# a workstation's third bridge the same way, for perception it runs for a robot
+# on the fabric; zenoh/bridge-perception.json5 says why it carries no namespace.
+# Linux only: the workstation that runs it is a Linux tower.
+#
 # Env (install.sh passes the first two down; both default to off):
 #   FM_DRY_RUN=1          print what would happen, change nothing
 #   FM_YES=1              assume yes, prompt for nothing
-#   FM_BRIDGE_VARIANT     main (default) | sim
+#   FM_BRIDGE_VARIANT     main (default) | sim | perception
 
 set -euo pipefail
 
@@ -64,13 +69,13 @@ LOG_DIR="$FM_COMMS_USER_LOG_DIR"
 AGENT_PLIST="$HOME/Library/LaunchAgents/$FM_LAUNCHD_BRIDGE_LABEL.plist"
 
 # Everything the two variants differ in, set once. RENDER_* name fm_comms_render
-# kinds; SIBLING_UNIT is the other bridge on the same host, which shares this
-# one's Cyclone profile and so restarts when that profile changes.
+# kinds; SIBLING_UNITS are the other bridges on the same host, which share this
+# one's Cyclone profile and so restart when that profile changes.
 case "$FM_BRIDGE_VARIANT" in
   main)
     NAME=bridge
     UNIT=fm-zenoh-bridge.service
-    SIBLING_UNIT=fm-zenoh-bridge-sim.service
+    SIBLING_UNITS="fm-zenoh-bridge-sim.service fm-zenoh-bridge-perception.service"
     CONFIG_FILE=bridge.json5
     RENDER_CONFIG=bridge
     RENDER_UNIT=bridge-unit
@@ -78,13 +83,21 @@ case "$FM_BRIDGE_VARIANT" in
   sim)
     NAME="sim bridge"
     UNIT=fm-zenoh-bridge-sim.service
-    SIBLING_UNIT=fm-zenoh-bridge.service
+    SIBLING_UNITS="fm-zenoh-bridge.service fm-zenoh-bridge-perception.service"
     CONFIG_FILE=bridge-sim.json5
     RENDER_CONFIG=bridge-sim
     RENDER_UNIT=bridge-sim-unit
     ;;
+  perception)
+    NAME="perception bridge"
+    UNIT=fm-zenoh-bridge-perception.service
+    SIBLING_UNITS="fm-zenoh-bridge.service fm-zenoh-bridge-sim.service"
+    CONFIG_FILE=bridge-perception.json5
+    RENDER_CONFIG=bridge-perception
+    RENDER_UNIT=bridge-perception-unit
+    ;;
   *)
-    fm_err "FM_BRIDGE_VARIANT is '$FM_BRIDGE_VARIANT' (want main | sim)"
+    fm_err "FM_BRIDGE_VARIANT is '$FM_BRIDGE_VARIANT' (want main | sim | perception)"
     exit 1
     ;;
 esac
@@ -257,10 +270,13 @@ install_unit_linux() {
   # stopped, but on a unit systemd has never seen it fails ("Unit not found"),
   # and that failure ended the sim-cloud role's first bridge install on a fresh
   # host before the sim bridge existed (2026-10-23). Same test as uninstall's.
-  if [ "$dds_changed" = "1" ] && [ -f "/etc/systemd/system/$SIBLING_UNIT" ]; then
-    fm_log "  cyclonedds.xml changed — try-restart $SIBLING_UNIT, which reads it too"
-    run sudo systemctl try-restart "$SIBLING_UNIT"
-  fi
+  local sibling
+  for sibling in $SIBLING_UNITS; do
+    if [ "$dds_changed" = "1" ] && [ -f "/etc/systemd/system/$sibling" ]; then
+      fm_log "  cyclonedds.xml changed — try-restart $sibling, which reads it too"
+      run sudo systemctl try-restart "$sibling"
+    fi
+  done
   fm_log "  watch it with: journalctl -u $UNIT -f"
 }
 
@@ -445,6 +461,10 @@ do_install() {
   if [ "$FM_BRIDGE_VARIANT" = sim ]; then
     require_sim_host || return 1
   fi
+  if [ "$os:$FM_BRIDGE_VARIANT" = macos:perception ]; then
+    fm_err "the perception bridge runs on a Linux workstation, beside fm-skills-perception"
+    return 1
+  fi
 
   fm_log "Installing the Zenoh ROS 2 $NAME (zenoh $version) on $os"
 
@@ -480,9 +500,13 @@ do_uninstall() {
     # bridge, so they are released only when neither unit is left to use them.
     # The package stays either way, but not pinned: once fm-comms no longer
     # manages it, apt may move it freely.
-    if [ -f "/etc/systemd/system/$SIBLING_UNIT" ]; then
+    local sibling remaining=""
+    for sibling in $SIBLING_UNITS; do
+      [ -f "/etc/systemd/system/$sibling" ] && remaining="${remaining:+$remaining }$sibling"
+    done
+    if [ -n "$remaining" ]; then
       fm_log "  left in place: $ENV_FILE, $CONF_DIR/cyclonedds.xml, and the held"
-      fm_log "  zenoh-bridge-ros2dds package, which $SIBLING_UNIT still uses"
+      fm_log "  zenoh-bridge-ros2dds package, which $remaining still uses"
     else
       run sudo apt-mark unhold zenoh-bridge-ros2dds 2>/dev/null || true
       fm_log "  left in place: $ENV_FILE and the zenoh-bridge-ros2dds package (unheld)"

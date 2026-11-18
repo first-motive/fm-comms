@@ -119,8 +119,10 @@ Usage: ./install.sh [install|uninstall] --role <role> [options]
 
 Options:
   --role NAME  which role this host plays (router | bridge | bridge-sim |
-               client | endpoint). bridge covers a Linux rig and a macOS
-               cockpit; bridge-sim adds a workstation's Jazzy bridge for sim runs
+               bridge-perception | client | endpoint). bridge covers a Linux rig
+               and a macOS cockpit; bridge-sim adds a workstation's Jazzy bridge
+               for sim runs; bridge-perception adds one for perception it runs
+               for a robot
   -y, --yes    non-interactive; assume yes (CI mode)
   --dry-run    print what would happen, change nothing
   -h, --help   show this help

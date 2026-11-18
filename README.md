@@ -60,6 +60,7 @@ Pick the role this host plays:
 ./install.sh --role router      # Rune: run zenohd under launchd
 ./install.sh --role bridge      # a rig or a Mac: run zenoh-bridge-ros2dds
 ./install.sh --role bridge-sim  # a workstation that hosts sim runs: add the Jazzy sim bridge
+FM_PERCEPTION_ROBOT=fm-rob-02 ./install.sh --role bridge-perception  # a workstation that runs that robot's perception
 ./install.sh --role client      # a laptop: the CLI tools only
 ./install.sh --role endpoint    # a host with no DDS graph: the shared env file only
 ```
@@ -131,7 +132,8 @@ recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state, frames, cameras, perception, planned path, task events, control descriptor, and contact out, nothing in
-robot-axol   an Axol: joint states, frames, description, cameras (head stereo pair) out, nothing in
+robot-axol   an Axol: joint states, frames, description, cameras (head stereo pair) out,
+             perception's detections and debug lease in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state, 10 Hz cameras, and contact out, nothing in;
              also a workstation's second, Jazzy bridge (--role bridge-sim)
@@ -147,8 +149,9 @@ poses, and compressed camera frames go out, and no topic comes back.
 
 `robot-axol` is taken the same way, by a `robot` host whose `robot` field is
 `axol`, and for the same reason: fm-robot-agent drives the Axol, and nothing on
-the fabric publishes to it. It carries no subscriber, service, or action rule,
-and every publisher rule is one name spelled literally:
+the fabric commands it. Its one inbound set is perception's, because the Axol's
+perception runs on a workstation (see Remote Perception below). Every rule of
+every kind is one name spelled literally:
 
 ```
 /joint_states  /tf                                                   capped at 50 Hz
@@ -157,6 +160,14 @@ and every publisher rule is one name spelled literally:
 /cam_head_right/image_raw/compressed  /cam_head_right/camera_info    capped at 20 Hz
 /cam_wrist_left/image_raw/compressed  /cam_wrist_left/camera_info    capped at 20 Hz
 /cam_wrist_right/image_raw/compressed  /cam_wrist_right/camera_info  capped at 20 Hz
+
+in, subscribers
+/perception/chest
+/perception/chest/can  /perception/chest/block  /perception/chest/puck  /perception/chest/paper
+/perception/wrist/can  /perception/wrist/block  /perception/wrist/puck  /perception/wrist/paper
+
+in, service client (the robot calls, the workstation serves)
+/perception/set_debug
 ```
 
 The cameras publish at 15 Hz; the cap sits above that so the head's two eyes
@@ -168,9 +179,12 @@ bridge joins the fm-axol container's DDS, which is pinned to loopback, so the
 host sets `FM_DDS_IFACE=lo` (the bridge then renders the loopback profile pinned
 to `lo`; left unset, Cyclone picks the LAN interface and routes nothing) and
 `FM_ROS_DISTRO=jazzy`. `check-transport.py` holds
-the profile to this list and refuses any rule that admits an Axol command topic
-(`/axol/joint_commands`, a forward position or trajectory controller,
-`/controller_manager/switch_controller`). A `robot` card whose kind is
+the profile to this list, refuses any service server or action rule, and refuses
+any rule of any kind that admits a motion or command name: fm-skills'
+`/motion/*` topics and segment action, `/axol/joint_commands`, a forward
+position or trajectory controller and its action,
+`/controller_manager/switch_controller`, the task and skill actions, and the
+teleop topics. A `robot` card whose kind is
 neither `anvil-*` nor `axol`/`axol-*` is refused at render rather than given the
 inbound-accepting `robot` profile, as is a `robot`-role card with no kind.
 
@@ -263,6 +277,37 @@ rigs already prefix their keys, and the Mac's job is to see them as
 Set it with `fm machine init --workload cockpit`. `FM_BRIDGE_PROFILE` in the env
 file still overrides it for a bench run.
 
+### Remote Perception
+
+fm-skills perception for the Axol runs on a workstation, not on the robot's CPU,
+over the fabric. The workstation's own bridge cannot carry it: it nests every key
+under the workstation's name, while the robot's cameras are `fm_rob_02/cam_head/...`
+and its detection subscribers wait on `fm_rob_02/perception/...`. So the
+workstation adds a third bridge, with no namespace, as the cockpit's:
+
+```
+robot fm-rob-02 (robot-axol)          workstation fm-ws-01 (bridge-perception)
+/cam_head, /cam_wrist_right, /tf  ->  /fm_rob_02/cam_head/..., /fm_rob_02/tf  -> fm-skills-perception
+/perception/chest/<class>, ...    <-  /fm_rob_02/perception/...               <- (robot_namespace:=fm_rob_02)
+/perception/set_debug (client)    ->  /fm_rob_02/perception/set_debug (server)
+```
+
+`FM_PERCEPTION_ROBOT=fm-rob-02 ./install.sh --role bridge-perception` places it on Linux:
+`/etc/fm-comms/bridge-perception.json5`, `fm-zenoh-bridge-perception.service`,
+`ROS_DISTRO=jazzy` (`FM_PERCEPTION_ROS_DISTRO`) for the fm-skills image, node
+name `zenoh_bridge_<ns>_perception`, and the host's shared `cyclonedds.xml`.
+Every rule is the one robot's prefix (`^/fm_rob_02/`, from `FM_PERCEPTION_ROBOT`,
+which the render requires) followed by one literal name: the detections and debug
+frames out, the two cameras perception reads and the frame tree in, and the debug
+lease served. One robot, spelled out, because the router authenticates no peer: a
+pattern over every robot's prefix would take frames and TF from whichever peer
+published under some robot's name. The prefix is also the containment: the
+workstation's own and its sim runs' topics carry none. `check-transport.py` holds it
+to that list, to one literal robot prefix, and to no namespace, and tests the motion
+names and another robot's keys against every rule. Serving another robot is a
+reinstall with its name.
+fm-skills' README covers the perception side (`./run.sh skills perception fabric up`).
+
 ### Check a render before installing it
 
 The configs in `zenoh/` carry `${FM_...}` placeholders. `./run.sh render` resolves
@@ -274,6 +319,8 @@ them exactly as an install would and prints the result instead of writing it:
 ./run.sh render bridge-unit       # what fm-zenoh-bridge.service would be
 ./run.sh render bridge-sim        # bridge-sim.json5 for a workstation or a Mac
 ./run.sh render bridge-sim-unit   # what fm-zenoh-bridge-sim.service would be
+FM_PERCEPTION_ROBOT=fm-rob-02 ./run.sh render bridge-perception  # for a workstation
+./run.sh render bridge-perception-unit  # what fm-zenoh-bridge-perception.service would be
 ./run.sh render router
 ./run.sh render launchd           # the router's LaunchDaemon plist
 ./run.sh render launchagent       # the Mac bridge's LaunchAgent plist
