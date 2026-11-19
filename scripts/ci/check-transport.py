@@ -497,8 +497,8 @@ ANVIL_PATTERN_RULES = (
 )
 
 
-# The Axol's topic list, the one bridge-robot-axol.json5 states: state and
-# sensing out, perception's detections and its debug lease in, nothing else.
+# The Axol's topic list, the one bridge-robot-axol.json5 states: state,
+# sensing, and the task's plan and events out, perception's detections and its debug lease in, nothing else.
 # Every rule of every kind must be one of these names spelled literally, with no
 # pattern rule at all, so a new camera or a new class is an edit here.
 AXOL_CONTRACT = {
@@ -515,6 +515,8 @@ AXOL_CONTRACT = {
         "/cam_wrist_left/camera_info",
         "/cam_wrist_right/image_raw/compressed",
         "/cam_wrist_right/camera_info",
+        "/display_planned_path",
+        "/task/events",
     ],
     # The detections fm-skills perception publishes for every class of its
     # packs, which fm-skills-perception on a workstation sends back and the
@@ -1036,6 +1038,12 @@ AXOL_MUTATIONS = (
     ("a deleted right head eye camera_info",
      lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/cam_head_right/camera_info$"),
      "carries no publisher rule for '/cam_head_right/camera_info'"),
+    ("a deleted planned path",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/display_planned_path$"),
+     "carries no publisher rule for '/display_planned_path'"),
+    ("a deleted task events topic",
+     lambda c: _ros2dds(c)["allow"]["publishers"].remove("^/task/events$"),
+     "carries no publisher rule for '/task/events'"),
     ("robot-side depth, which the Axol no longer sends",
      lambda c: _ros2dds(c)["allow"]["publishers"].append("^/cam_head/depth_sensor/compressed$"),
      "neither a literal contract topic"),

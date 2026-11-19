@@ -132,7 +132,8 @@ recorder     head + wrist cameras, hand tracking, capture session, LiDAR
 processor    the dataset engine's run state and commands
 robot        joint states and TF out, Servo jog commands in
 robot-anvil  an Anvil workcell: state, frames, cameras, perception, planned path, task events, control descriptor, and contact out, nothing in
-robot-axol   an Axol: joint states, frames, description, cameras (head stereo pair) out,
+robot-axol   an Axol: joint states, frames, description, cameras (head stereo pair),
+             planned path, and task events out,
              perception's detections and debug lease in
 workstation  the GPU tower: robot and processor at once, since it runs both
 sim          a sim host: run state, 10 Hz cameras, and contact out, nothing in;
@@ -160,6 +161,7 @@ every kind is one name spelled literally:
 /cam_head_right/image_raw/compressed  /cam_head_right/camera_info    capped at 20 Hz
 /cam_wrist_left/image_raw/compressed  /cam_wrist_left/camera_info    capped at 20 Hz
 /cam_wrist_right/image_raw/compressed  /cam_wrist_right/camera_info  capped at 20 Hz
+/display_planned_path  /task/events
 
 in, subscribers
 /perception/chest

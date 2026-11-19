@@ -4,8 +4,8 @@
 /// Like the anvil profile, this is the robot profile with the commands taken
 /// out. The desktop drives an Axol through `fm/robot/<ns>/*` queryables served
 /// by fm-robot-agent, which reaches the robot on the host; nothing off-host
-/// commands it. So the bridge carries state and sensing outward, and takes one
-/// thing back: perception's results, from fm-skills-perception running on a
+/// commands it. So the bridge carries state, sensing, and the task's plan and
+/// events outward, and takes one thing back: perception's results, from fm-skills-perception running on a
 /// workstation (bridge-perception.json5) rather than on the robot's CPU.
 ///
 /// `/joint_states` lands on `<ns>/joint_states`, the key fm-robot-agent
@@ -92,6 +92,13 @@
           "^/cam_wrist_left/camera_info$",
           "^/cam_wrist_right/image_raw/compressed$",
           "^/cam_wrist_right/camera_info$",
+          /// The motion fm-skills planned with MoveIt, every segment, published
+          /// once per move before the arm starts, which the desktop draws
+          /// against the path the arm then takes. Read-only, like the rest.
+          "^/display_planned_path$",
+          /// fm-skills' task, mode, and skill events, which the desktop draws as
+          /// the task's state machine. Read-only, a few per move.
+          "^/task/events$",
         ],
         /// Perception's detections, published by fm-skills-perception on a
         /// workstation from the cameras above and read here by the task and
