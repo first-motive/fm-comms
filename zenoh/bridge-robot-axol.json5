@@ -5,8 +5,8 @@
 /// out. The desktop drives an Axol through `fm/robot/<ns>/*` queryables served
 /// by fm-robot-agent, which reaches the robot on the host; nothing off-host
 /// commands it. So the bridge carries state, sensing, and the task's plan and
-/// events outward, and takes one thing back: perception's results, from fm-skills-perception running on a
-/// workstation (bridge-perception.json5) rather than on the robot's CPU.
+/// events outward, and takes two things back: perception's results, from fm-skills-perception running on a
+/// workstation (bridge-perception.json5) rather than on the robot's CPU, and fm-twin's table top.
 ///
 /// `/joint_states` lands on `<ns>/joint_states`, the key fm-robot-agent
 /// publishes the Axol's telemetry on when the ROS graph is down: the agent
@@ -117,6 +117,13 @@
           "^/perception/wrist/block$",
           "^/perception/wrist/puck$",
           "^/perception/wrist/paper$",
+          /// fm-twin's table top (geometry_msgs/PolygonStamped), which the
+          /// twin on a workstation publishes on the key <ns>/twin/table, as it
+          /// does its cloud. The task reads its height at each run's start and
+          /// keeps specs.yaml's unless the twin's is fresh, level, and within
+          /// 15 cm of it, so a forged outline moves the table that far at most
+          /// (fm-skills#146).
+          "^/twin/table$",
         ],
         /// The debug lease, called from this robot (fm-robot-agent renews it)
         /// and served by the workstation's perception node. A client rule

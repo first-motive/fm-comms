@@ -167,6 +167,7 @@ in, subscribers
 /perception/chest
 /perception/chest/can  /perception/chest/block  /perception/chest/puck  /perception/chest/paper
 /perception/wrist/can  /perception/wrist/block  /perception/wrist/puck  /perception/wrist/paper
+/twin/table                                                          fm-twin's table top (fm-skills#146)
 
 in, service client (the robot calls, the workstation serves)
 /perception/set_debug
@@ -292,6 +293,7 @@ robot fm-rob-02 (robot-axol)          workstation fm-ws-01 (bridge-perception)
 /cam_head, /cam_wrist_right, /tf  ->  /fm_rob_02/cam_head/..., /fm_rob_02/tf  -> fm-skills-perception
 /perception/chest/<class>, ...    <-  /fm_rob_02/perception/...               <- (robot_namespace:=fm_rob_02)
 /perception/set_debug (client)    ->  /fm_rob_02/perception/set_debug (server)
+/twin/table                       <-  /fm_rob_02/twin/table                   <- fm-twin (key fm_rob_02/twin/table)
 ```
 
 `FM_PERCEPTION_ROBOT=fm-rob-02 ./install.sh --role bridge-perception` places it on Linux:

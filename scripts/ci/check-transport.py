@@ -23,7 +23,8 @@ Three passes, in order of how early they catch a mistake:
    the recorder never publishes raw frames, the robot never accepts a trajectory
    from off-rig, the anvil workcell accepts nothing inbound and publishes only
    its contract's topics, the axol robot publishes only its contract's topics
-   and admits only perception's literal detection topics and debug lease, with
+   and admits only perception's literal detection topics and debug lease and
+   fm-twin's table, with
    no motion, controller, joint command, or action name admitted by any rule,
    the axol's cameras capped just above their driver rate, a workstation's
    remote-perception bridge carries only the robot-prefixed perception and
@@ -531,6 +532,9 @@ AXOL_CONTRACT = {
         "/perception/wrist/block",
         "/perception/wrist/puck",
         "/perception/wrist/paper",
+        # fm-twin's table top, which fm-twin on a workstation publishes under
+        # the robot's prefix and the task reads for its table height.
+        "/twin/table",
     ],
     # The debug lease: fm-robot-agent on the robot calls it, the workstation's
     # node serves it.
@@ -604,13 +608,15 @@ def check_never_admitted(where: str, allow: dict, names: list[str]) -> None:
 PERCEPTION_ROBOT = "fm-rob-02"
 PERCEPTION_BRIDGE_PREFIX = "/fm_rob_02"
 PERCEPTION_BRIDGE_CONTRACT = {
-    "publishers": AXOL_CONTRACT["subscribers"] + ["/perception/debug/chest", "/perception/debug/wrist"],
+    "publishers": [t for t in AXOL_CONTRACT["subscribers"] if t.startswith("/perception/")]
+    + ["/perception/debug/chest", "/perception/debug/wrist"],
     "subscribers": [
         "/tf",
         "/tf_static",
         "/cam_head/image_raw/compressed",
         "/cam_wrist_right/image_raw/compressed",
         "/cam_head/camera_info",
+        "/twin/table",
     ],
     "service_servers": AXOL_CONTRACT["service_clients"],
 }
