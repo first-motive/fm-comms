@@ -106,7 +106,10 @@
           /// its yaml's nominal values.
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_head/camera_info$",
           /// The table the robot's task chose for its run, latched, which
-          /// moves every class's plane from specs.yaml's (fm-skills#146).
+          /// moves every class's plane from specs.yaml's. Perception takes it
+          /// only within 1 cm below and 5 cm above specs.yaml's table, the
+          /// task's band, so a peer forging it moves detections that far at
+          /// most (fm-skills#146).
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/skills/table$",
         ],
         service_servers: [
