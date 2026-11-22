@@ -5,8 +5,9 @@
 /// out. The desktop drives an Axol through `fm/robot/<ns>/*` queryables served
 /// by fm-robot-agent, which reaches the robot on the host; nothing off-host
 /// commands it. So the bridge carries state, sensing, and the task's plan and
-/// events outward, and takes one thing back: perception's results, from fm-skills-perception running on a
-/// workstation (bridge-perception.json5) rather than on the robot's CPU.
+/// events and chosen table outward, and takes two things back: perception's results, from
+/// fm-skills-perception running on a workstation (bridge-perception.json5) rather than on the
+/// robot's CPU, and fm-twin's table top.
 ///
 /// `/joint_states` lands on `<ns>/joint_states`, the key fm-robot-agent
 /// publishes the Axol's telemetry on when the ROS graph is down: the agent
@@ -99,6 +100,10 @@
           /// fm-skills' task, mode, and skill events, which the desktop draws as
           /// the task's state machine. Read-only, a few per move.
           "^/task/events$",
+          /// The table the task chose for its run (geometry_msgs/PolygonStamped,
+          /// latched), which remote perception casts its planes onto. The
+          /// plugin serves it to late joiners from its cache.
+          "^/skills/table$",
         ],
         /// Perception's detections, published by fm-skills-perception on a
         /// workstation from the cameras above and read here by the task and
@@ -117,6 +122,15 @@
           "^/perception/wrist/block$",
           "^/perception/wrist/puck$",
           "^/perception/wrist/paper$",
+          /// fm-twin's table top (geometry_msgs/PolygonStamped), which the
+          /// twin on a workstation publishes on the key <ns>/twin/table, as it
+          /// does its cloud. The task, its one reader, takes its height at each
+          /// run's start only within 1 cm below and 5 cm above specs.yaml's
+          /// table (per robot, twin_table_band_m). This rule lets any peer on
+          /// the router move every grasp, handover and place target the arm
+          /// goes to by that much; the task sends no target under specs.yaml's
+          /// table less 1 cm whatever it reads (fm-skills#146).
+          "^/twin/table$",
         ],
         /// The debug lease, called from this robot (fm-robot-agent renews it)
         /// and served by the workstation's perception node. A client rule

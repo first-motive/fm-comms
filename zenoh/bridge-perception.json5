@@ -29,9 +29,10 @@
 /// What crosses, and which way. `publishers` and `subscribers` are read from
 /// the local DDS side, as on every profile:
 ///
-///   in   the robot's frame tree and the two cameras perception reads (the
-///        Axol's head and right wrist, compressed), exactly as
-///        bridge-robot-axol.json5 exports them
+///   in   the robot's frame tree, the two cameras perception reads (the
+///        Axol's head and right wrist, compressed) and the head's lens,
+///        exactly as bridge-robot-axol.json5 exports them
+///   in   the table the robot's task chose for its run
 ///   out  perception's detections and debug frames, under the robot's prefix,
 ///        which bridge-robot-axol.json5 admits by the same literal names
 ///   out  the debug lease service, served here for the robot's client
@@ -104,6 +105,13 @@
           /// The head's lens, which places the chest rays; without it perception falls back to
           /// its yaml's nominal values.
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/cam_head/camera_info$",
+          /// The table the robot's task chose for its run, latched, which
+          /// moves every class's plane from specs.yaml's until the run's end,
+          /// which the task sends as the same topic with no corners. Perception takes it
+          /// only within 1 cm below and 5 cm above specs.yaml's table, the
+          /// task's band, so a peer forging it moves detections that far at
+          /// most (fm-skills#146).
+          "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/skills/table$",
         ],
         service_servers: [
           "^/${FM_PERCEPTION_ROBOT_NAMESPACE}/perception/set_debug$",
