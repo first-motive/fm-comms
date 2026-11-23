@@ -154,6 +154,24 @@ run_perception_installer() {
     "$ROOT/scripts/install-bridge-perception.sh" "$action" 2>&1 || true
 }
 
+# Run the bridge install through the front door, with FM_DRY_RUN set to $1 in
+# the environment and no --dry-run flag. Never fails the test by itself.
+run_front_door() {
+  PATH="$WORKDIR/bin:$PATH" \
+  FM_TEST_UNAME_S=Linux \
+  FM_DRY_RUN="$1" \
+  FM_YES=1 \
+  FM_NO_MODIFY_PATH=1 \
+  FM_INSTALL_DIR="$WORKDIR/bin-install" \
+  FM_MACHINE_FILE="$WORKDIR/machine.json" \
+  FM_COMMS_ENV_FILE="$WORKDIR/fm-comms.env" \
+  FM_COMMS_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_CONF_DIR="$WORKDIR/etc" \
+  FM_COMMS_USER_LOG_DIR="$WORKDIR/log" \
+  FM_BRIDGE_PROFILE=workstation \
+    "$ROOT/install.sh" --role bridge 2>&1 || true
+}
+
 check() {
   local what="$1" haystack="$2" needle="$3"
   if printf '%s' "$haystack" | grep -qF -- "$needle"; then
@@ -344,6 +362,20 @@ main() {
     "would run: sudo systemctl disable --now fm-zenoh-bridge-perception.service"
   check_absent "perception: uninstall leaves the workstation's unit running" "$out" \
     "disable --now fm-zenoh-bridge.service"
+
+  # The front door must honour an inherited FM_DRY_RUN=1, the env every role
+  # script documents. It used to reset it to 0 unless --dry-run was passed, so a
+  # run meant as a dry run reinstalled Rune's router for real (2026-11-23). The
+  # sudo stub fails loudly if anything gets past the dry run.
+  out="$(run_front_door 1)"
+  check "front door: an inherited FM_DRY_RUN=1 stays a dry run" "$out" "would run: sudo"
+  check_absent "front door: nothing really runs under FM_DRY_RUN=1" "$out" "SHOULD NOT RUN"
+
+  # Role scripts test for exactly "1", so any other spelling must be refused
+  # rather than passed through as a real install.
+  out="$(run_front_door true)"
+  check "front door: FM_DRY_RUN=true is refused" "$out" "FM_DRY_RUN must be 0 or 1"
+  check_absent "front door: nothing runs when FM_DRY_RUN is refused" "$out" "SHOULD NOT RUN"
 
   if [ "$FAILURES" -gt 0 ]; then
     fm_err "$FAILURES check(s) failed — a reinstall would leave the old config running"

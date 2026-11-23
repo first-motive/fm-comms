@@ -27,8 +27,10 @@
 #   FM_NO_MODIFY_PATH   skip shell-profile edits    (set to 1 in CI)
 #   FM_SELFTEST         CI self-test, no real work  (set to 1 in CI)
 #
-# Passed down to the role script, which is expected to honour both:
-#   FM_DRY_RUN          1 when --dry-run was given
+# Passed down to the role script, which is expected to honour both. Both are
+# read from the environment too, so a role script's documented env works
+# through this front door:
+#   FM_DRY_RUN          1 when --dry-run was given or FM_DRY_RUN=1 was set
 #   FM_YES              1 when -y / --yes was given; prompt for nothing
 #
 # The body is wrapped in main() and called on the last line, so a truncated
@@ -219,7 +221,10 @@ main() {
 
   [ -n "$FM_COMMS_DIR" ] || FM_COMMS_DIR="$(fm_comms_dir_default)"
 
-  local cmd="install" dry=0 role="$FM_COMMS_ROLE"
+  # Seeded from the environment, as FM_YES is. Starting at 0 discarded an
+  # inherited FM_DRY_RUN=1, so a run meant as a dry run reinstalled the router
+  # for real and took it down (Rune, 2026-11-23).
+  local cmd="install" dry="${FM_DRY_RUN:-0}" role="$FM_COMMS_ROLE"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       install|uninstall) cmd="$1" ;;
@@ -232,6 +237,13 @@ main() {
     esac
     shift
   done
+
+  # Role scripts test for exactly "1", so FM_DRY_RUN=true would install for real.
+  # Refuse anything else rather than guess what it meant.
+  case "$dry" in
+    0|1) ;;
+    *) fm_err "FM_DRY_RUN must be 0 or 1, not '$dry'"; return 1 ;;
+  esac
 
   if [ "$FM_SELFTEST" = "1" ]; then
     selftest

@@ -19,9 +19,9 @@ trap 'rm -rf "$WORK"' EXIT
 printf 'FM_ROUTER_ENDPOINT=tcp/100.111.147.125:7447\n' > "$WORK/tailnet.env"
 printf 'FM_ROUTER_ENDPOINT=tcp/192.168.1.213:7447\n'   > "$WORK/lan.env"
 
-# --dry-run, not FM_DRY_RUN=1: the front door SETS that variable from the flag,
-# so exporting it is silently ignored and the install runs for real. Sandboxed
-# HOME as well, so a mistake here cannot reach the machine running the test.
+# --dry-run on the command line, so the dry run is visible where the install is
+# called. The front door honours an exported FM_DRY_RUN=1 too. Sandboxed HOME as
+# well, so a mistake here cannot reach the machine running the test.
 run_install() {  # env-file [role]
   local home
   home="$WORK/home"
