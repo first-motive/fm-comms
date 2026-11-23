@@ -171,8 +171,7 @@ PYLOG
     sudo install -m 0644 -o root -g wheel "$tmp" "$PLIST"
     rm -f "$tmp"
   fi
-  run sudo launchctl bootout "system/$FM_LAUNCHD_LABEL" 2>/dev/null || true
-  run sudo launchctl bootstrap system "$PLIST"
+  fm_launchd_reload_system run "$FM_LAUNCHD_LABEL" "$PLIST" || return 1
   fm_log "  bounded stdout and stderr: $LOG_DIR/zenohd.log (200 MiB, 5 gzip archives)"
 }
 

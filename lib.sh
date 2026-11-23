@@ -438,6 +438,54 @@ FM_LAUNCHD_LABEL=ai.firstmotive.zenohd
 # while someone is logged in and looking at the fleet.
 FM_LAUNCHD_BRIDGE_LABEL=ai.firstmotive.zenoh-bridge
 
+# Replace a running system LaunchDaemon with the plist on disk: bootout, wait
+# for the old job to be gone, bootstrap.
+#
+# `launchctl bootout` returns before launchd has finished removing the job, and a
+# bootstrap issued in that window fails with "5: Input/output error". Without
+# the wait, a reinstall unloaded the router and left it unloaded, and the fleet
+# had no router until someone bootstrapped it by hand (Rune, 2026-11-23). The
+# bootstrap is still retried, because the window is launchd's and not ours.
+#
+# Takes the caller's `run` helper as $1, as fm_apt_add_zenoh_repo does, so a dry
+# run prints the two commands and waits for nothing.
+#
+# Both knobs are whole numbers: seconds to wait for the old job, and bootstrap
+# attempts.
+FM_LAUNCHD_RELOAD_WAIT="${FM_LAUNCHD_RELOAD_WAIT:-10}"
+FM_LAUNCHD_RELOAD_TRIES="${FM_LAUNCHD_RELOAD_TRIES:-3}"
+fm_launchd_reload_system() {
+  local runner="$1" label="$2" plist="$3" waited=0 try stale=0
+  "$runner" sudo launchctl bootout "system/$label" 2>/dev/null || true
+  if [ "${FM_DRY_RUN:-0}" = "1" ]; then
+    "$runner" sudo launchctl bootstrap system "$plist"
+    return 0
+  fi
+
+  while sudo launchctl print "system/$label" >/dev/null 2>&1; do
+    if [ "$waited" -ge "$FM_LAUNCHD_RELOAD_WAIT" ]; then
+      fm_warn "  launchd still lists $label after ${waited}s; bootstrapping anyway"
+      stale=1
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  for try in $(seq 1 "$FM_LAUNCHD_RELOAD_TRIES"); do
+    sudo launchctl bootstrap system "$plist" && return 0
+    fm_warn "  bootstrap of $label failed (attempt $try of $FM_LAUNCHD_RELOAD_TRIES)"
+    sleep 2
+  done
+  if [ "$stale" = "1" ]; then
+    fm_err "the old $label job never left launchd, so the new one could not load"
+  else
+    fm_err "launchd would not load $plist, so $label is not running"
+  fi
+  fm_err "  load it by hand: sudo launchctl bootstrap system $plist"
+  return 1
+}
+
 # Where the rendered configs and the daemon's logs go on a router host.
 FM_COMMS_CONF_DIR="${FM_COMMS_CONF_DIR:-/etc/fm-comms}"
 FM_COMMS_LOG_DIR_DEFAULT="${FM_COMMS_LOG_DIR_DEFAULT:-/usr/local/var/log/fm-comms}"
