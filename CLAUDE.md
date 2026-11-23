@@ -91,6 +91,7 @@ shellcheck $(find . -name '*.sh' -not -path './.git/*')
 uv run --project episodes pytest -q
 uv run scripts/ci/check-transport.py     # renders + invariants, no network
 ./scripts/ci/test-reinstall-restart.sh   # a reinstall restarts the service, no network
+./scripts/ci/test-launchd-reload.sh      # a router reinstall leaves the daemon loaded
 ./scripts/ci/smoke-transport.sh          # bridge <-> router session, needs docker
 ```
 
