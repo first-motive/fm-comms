@@ -63,6 +63,21 @@
   <key>Umask</key>
   <integer>63</integer>
 
+  <!-- launchd caps a job at 256 open files by default. The router holds one
+       socket per peer link, and when sockets leak (CLOSE_WAIT after peer
+       reconnect storms) that cap was reached in about two hours, after which
+       the router could accept no links at all. 10240 buys days of headroom. -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>10240</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>10240</integer>
+  </dict>
+
   <key>ProcessType</key>
   <string>Background</string>
 </dict>
