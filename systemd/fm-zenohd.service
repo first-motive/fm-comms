@@ -15,6 +15,9 @@ RestartSec=5
 # A router that cannot bind its port fails instantly and forever; without this
 # the default rate limiter gives up and leaves the fleet with no router at all.
 StartLimitIntervalSec=0
+# One socket per peer link. Leaked CLOSE_WAIT sockets exhausted launchd's 256
+# cap on Rune in two hours; the same headroom applies here.
+LimitNOFILE=10240
 
 # The router terminates transports; it reads no robot data and writes no files.
 NoNewPrivileges=true
